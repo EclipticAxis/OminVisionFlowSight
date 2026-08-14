@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# IDE / Editor
+.vscode/
+.idea/
+
+# Tool / agent workspace
+.workbuddy/
+.dbg/
+.trae/
+
+# Logs
+*.log
+*.ndjson
+error.log
+
+# Recordings / output artifacts
+recordings/
+output/
+
+# OS
+Thumbs.db
+.DS_Store

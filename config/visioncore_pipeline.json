@@ -1,0 +1,7 @@
+{
+  "stages": [
+    {"type": "DummyStage", "params": {"name": "capture"}},
+    {"type": "DenoiseStage", "params": {"name": "denoise"}},
+    {"type": "DummyStage", "params": {"name": "detect"}}
+  ]
+}
