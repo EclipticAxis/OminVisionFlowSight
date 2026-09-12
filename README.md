@@ -78,7 +78,7 @@
 
 ```bash
 # 1. 克隆仓库（含 LFS 模型权重）
-git clone https://github.com/1465586445-jpg/OminVisionFlowSight.git
+git clone https://github.com/EclipticAxis/OminVisionFlowSight.git
 cd OminVisionFlowSight
 
 # 2. 拉取模型权重（未安装 git-lfs 前 models/ 下仅有指针文件）
