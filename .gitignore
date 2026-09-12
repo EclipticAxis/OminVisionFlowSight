@@ -4,6 +4,13 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build / distribution
+build/
+dist/
 
 # IDE / Editor
 .vscode/
