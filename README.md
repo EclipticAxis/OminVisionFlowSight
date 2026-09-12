@@ -72,20 +72,16 @@
 
 - Windows 10 / 11（推荐；DirectShow 采集与 DirectML 加速）
 - Python 3.11
-- [Git LFS](https://git-lfs.com/)（`models/` 目录中的模型权重以 Git LFS 存储）
+- 无需额外工具（`models/` 目录中的模型权重已随仓库直接分发）
 
 ### 安装步骤
 
 ```bash
-# 1. 克隆仓库（含 LFS 模型权重）
+# 1. 克隆仓库（模型权重已包含在仓库中）
 git clone https://github.com/EclipticAxis/OminVisionFlowSight.git
 cd OminVisionFlowSight
 
-# 2. 拉取模型权重（未安装 git-lfs 前 models/ 下仅有指针文件）
-git lfs install
-git lfs pull
-
-# 3. 创建虚拟环境并安装依赖（Windows 示例）
+# 2. 创建虚拟环境并安装依赖（Windows 示例）
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
@@ -148,7 +144,7 @@ OminVisionFlowSight/
 ├── gui/            # PyQt6 图形界面（主窗口、相机格、主题、动画、设置对话框）
 ├── visioncore/     # 新架构：模块化流水线 / 事件总线 / 协议 / 插件 / 目标管理（影子旁路）
 ├── config/         # 运行配置（visioncore_pipeline.json）
-├── models/         # 模型权重文件（Git LFS 存储）
+├── models/         # 模型权重文件（随仓库直接分发）
 ├── tests/          # pytest 单元测试
 ├── docs/           # 各阶段的设计、审计与里程碑报告
 ├── architecture/   # 架构梳理、审计报告与全量档案文档
