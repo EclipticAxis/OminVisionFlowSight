@@ -18,7 +18,8 @@ from PyQt6.QtWidgets import (
 
 from gui.animations import AnimationHelper
 from gui.safe_widgets import WheelFocusComboBox, WheelFocusDoubleSpinBox, WheelFocusSpinBox
-from gui.theme import COLORS as C
+from gui.squircle import squircle_asset_url  # noqa: F401  (保留引用：URL 契约)
+from gui.theme import COLORS as C, RADIUS, squircle_border_image
 
 
 class SettingsDialog(QDialog):
@@ -169,13 +170,11 @@ class SettingsDialog(QDialog):
 
         self._path_edit = QLineEdit(self._current_dir)
         self._path_edit.setReadOnly(True)
-        self._path_edit.setFixedHeight(34)
+        self._path_edit.setFixedHeight(36)
         self._path_edit.setStyleSheet(
-            f"background-color: {C['BG_TERTIARY']}; "
             f"color: {C['TEXT_PRIMARY']}; "
-            f"border: 1px solid {C['BORDER_LIGHT']}; "
-            f"border-radius: 5px; "
-            f"padding: 6px 10px;"
+            f"{squircle_border_image('CONTROL', 'CONTROL')} "
+            f"padding: 4px 10px;"
             f"font-size: 9pt;"
             f"font-weight: 500;"
         )
@@ -183,6 +182,7 @@ class SettingsDialog(QDialog):
 
         browse_btn = QPushButton("浏览...")
         browse_btn.setFixedWidth(80)
+        browse_btn.setFixedHeight(36)
         browse_btn.clicked.connect(self._on_browse)
         path_row.addWidget(browse_btn)
 
@@ -276,7 +276,7 @@ class SettingsDialog(QDialog):
         spin.setSingleStep(step)
         spin.setDecimals(2)
         spin.setValue(value)
-        spin.setFixedHeight(34)
+        spin.setFixedHeight(36)
         setattr(self, attr_name, spin)
         row.addWidget(spin)
         return row
@@ -293,7 +293,7 @@ class SettingsDialog(QDialog):
         spin.setRange(min_v, max_v)
         spin.setSingleStep(step)
         spin.setValue(value)
-        spin.setFixedHeight(34)
+        spin.setFixedHeight(36)
         setattr(self, attr_name, spin)
         row.addWidget(spin)
 
@@ -313,7 +313,7 @@ class SettingsDialog(QDialog):
         row.addWidget(lbl)
 
         self._model_combo = WheelFocusComboBox()
-        self._model_combo.setFixedHeight(34)
+        self._model_combo.setFixedHeight(36)
         self._model_combo.addItem("自动 / 默认 YOLO 模型", "")
         for path in self._discover_model_paths():
             self._model_combo.addItem(path.name, str(path))
@@ -338,6 +338,7 @@ class SettingsDialog(QDialog):
 
         browse_btn = QPushButton("浏览...")
         browse_btn.setFixedWidth(80)
+        browse_btn.setFixedHeight(36)
         browse_btn.clicked.connect(self._on_browse_model)
         row.addWidget(browse_btn)
         return row
@@ -352,7 +353,7 @@ class SettingsDialog(QDialog):
         row.addWidget(lbl)
 
         self._head_classifier_combo = WheelFocusComboBox()
-        self._head_classifier_combo.setFixedHeight(34)
+        self._head_classifier_combo.setFixedHeight(36)
         self._head_classifier_combo.addItem("关闭", "")
         for path in self._discover_head_classifier_paths():
             self._head_classifier_combo.addItem(path.name, str(path))
@@ -368,7 +369,7 @@ class SettingsDialog(QDialog):
         stride_spin = WheelFocusSpinBox()
         stride_spin.setRange(1, 10)
         stride_spin.setValue(self._ai_head_classifier_stride)
-        stride_spin.setFixedHeight(34)
+        stride_spin.setFixedHeight(36)
         stride_spin.setFixedWidth(60)
         stride_spin.setToolTip("分类跳帧（每 N 帧一次），降低多目标场景下的延迟")
         self._head_classifier_stride_spin = stride_spin
@@ -376,6 +377,7 @@ class SettingsDialog(QDialog):
 
         browse_btn = QPushButton("浏览...")
         browse_btn.setFixedWidth(80)
+        browse_btn.setFixedHeight(36)
         browse_btn.clicked.connect(self._on_browse_head_classifier_model)
         row.addWidget(browse_btn)
         return row
@@ -411,7 +413,7 @@ class SettingsDialog(QDialog):
         row.addWidget(lbl)
 
         self._filter_type_combo = WheelFocusComboBox()
-        self._filter_type_combo.setFixedHeight(34)
+        self._filter_type_combo.setFixedHeight(36)
         self._filter_type_combo.addItem("UKF（标准无迹卡尔曼）", "ukf")
         self._filter_type_combo.addItem("MCUKF（最大相关熵，抗离群）", "mcukf")
         self._filter_type_combo.addItem("Manifold UKF（流形，SPD 稳定）", "manifold_ukf")
@@ -434,7 +436,7 @@ class SettingsDialog(QDialog):
         row.addWidget(lbl)
 
         self._matching_strategy_combo = WheelFocusComboBox()
-        self._matching_strategy_combo.setFixedHeight(34)
+        self._matching_strategy_combo.setFixedHeight(36)
         self._matching_strategy_combo.addItem("匈牙利（全局最优）", "hungarian")
         self._matching_strategy_combo.addItem("级联（ByteTrack 两阶段）", "cascade")
         self._matching_strategy_combo.addItem("贪婪（原始，回退用）", "greedy")
@@ -456,7 +458,7 @@ class SettingsDialog(QDialog):
         row.addWidget(lbl)
 
         self._denoise_combo = WheelFocusComboBox()
-        self._denoise_combo.setFixedHeight(34)
+        self._denoise_combo.setFixedHeight(36)
         self._denoise_combo.addItem("关闭", "none")
         self._denoise_combo.addItem("双边滤波（快）", "bilateral")
         self._denoise_combo.addItem("NL-Means（高质量）", "nl_means")
@@ -468,7 +470,7 @@ class SettingsDialog(QDialog):
         self._denoise_strength_spin = WheelFocusSpinBox()
         self._denoise_strength_spin.setRange(1, 10)
         self._denoise_strength_spin.setValue(self._ai_denoise_strength)
-        self._denoise_strength_spin.setFixedHeight(34)
+        self._denoise_strength_spin.setFixedHeight(36)
         self._denoise_strength_spin.setFixedWidth(60)
         row.addWidget(self._denoise_strength_spin)
 
@@ -517,35 +519,44 @@ class SettingsDialog(QDialog):
         return sorted(paths, key=lambda p: p.name.lower())
 
     def _apply_theme(self) -> None:
+        # 胶囊控件（背景+描边+圆角）一律使用 squircle border-image 资产，
+        # 颜色/描边已烘焙进 PNG；无边框规则（滚动区、drop-down 等）保持不动。
         self.setStyleSheet(
-            f"QDialog {{ background-color: {C['BG_PRIMARY']}; color: {C['TEXT_PRIMARY']}; border-radius: 5px; }} "
-            f"QLineEdit {{ background-color: {C['BG_TERTIARY']}; color: {C['TEXT_PRIMARY']}; "
-            f"border: 1px solid {C['BORDER_LIGHT']}; border-radius: 5px; padding: 8px 12px; }} "
+            f"QDialog {{ color: {C['TEXT_PRIMARY']}; "
+            f"{squircle_border_image('DIALOG', 'CARD')} }} "
+            f"QLineEdit {{ color: {C['TEXT_PRIMARY']}; "
+            f"{squircle_border_image('CONTROL', 'CONTROL')} padding: 4px 12px; }} "
             f"QScrollArea#settingsScroll {{ background-color: transparent; border: none; }} "
             f"QWidget#settingsContent {{ background-color: transparent; }} "
-            f"QFrame#versionInfo {{ background-color: {C['BG_TERTIARY']}; border: 1px solid {C['BORDER_LIGHT']}; border-radius: 5px; }} "
+            f"QFrame#versionInfo {{ {squircle_border_image('PATH_VALUE', 'CARD')} }} "
             f"QLabel#versionValue {{ color: {C['TEXT_SECONDARY']}; font-size: 8.5pt; }} "
-            f"QComboBox, QSpinBox, QDoubleSpinBox {{ background-color: {C['BG_TERTIARY']}; color: {C['TEXT_PRIMARY']}; "
-            f"border: 1px solid {C['BORDER_LIGHT']}; border-radius: 5px; padding: 6px 10px; }} "
-            f"QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover {{ border-color: {C['ACCENT']}; }} "
+            f"QComboBox, QSpinBox, QDoubleSpinBox {{ color: {C['TEXT_PRIMARY']}; "
+            f"{squircle_border_image('CONTROL', 'CONTROL')} padding: 4px 10px; min-height: 14px; }} "
+            f"QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover {{ "
+            f"{squircle_border_image('CONTROL_HOVER', 'CONTROL')} }} "
             f"QComboBox::drop-down {{ width: 26px; border: none; }} "
-            f"QComboBox QAbstractItemView {{ background-color: {C['BG_TERTIARY']}; color: {C['TEXT_PRIMARY']}; "
+            f"QComboBox QAbstractItemView {{ color: {C['TEXT_PRIMARY']}; "
             f"selection-background-color: {C['ACCENT']}; selection-color: {C['BG_PRIMARY']}; "
-            f"border: 1px solid {C['BORDER_LIGHT']}; outline: none; padding: 4px; }} "
-            f"QComboBox QAbstractItemView::item {{ background-color: {C['BG_TERTIARY']}; color: {C['TEXT_PRIMARY']}; "
-            f"padding: 7px 10px; min-height: 24px; }} "
-            f"QComboBox QAbstractItemView::item:hover {{ background-color: {C['BG_ELEVATED']}; }} "
-            f"QComboBox QAbstractItemView::item:selected {{ background-color: {C['ACCENT']}; color: {C['BG_PRIMARY']}; }} "
+            f"{squircle_border_image('COMBO_VIEW_FEATURE', 'CONTROL')} outline: none; padding: 4px; }} "
+            f"QComboBox QAbstractItemView::item {{ color: {C['TEXT_PRIMARY']}; "
+            f"{squircle_border_image('COMBO_ITEM', 'CONTROL')} padding: 7px 10px; min-height: 24px; }} "
+            f"QComboBox QAbstractItemView::item:hover {{ "
+            f"{squircle_border_image('COMBO_ITEM_HOVER', 'CONTROL')} }} "
+            f"QComboBox QAbstractItemView::item:selected {{ "
+            f"{squircle_border_image('COMBO_ITEM_SELECTED', 'CONTROL')} color: {C['BG_PRIMARY']}; }} "
             f"QComboBox QAbstractScrollArea {{ background-color: {C['BG_TERTIARY']}; border: none; }} "
             f"QComboBox QAbstractScrollArea::corner {{ background-color: {C['BG_TERTIARY']}; }} "
-            f"QPushButton {{ background-color: {C['BG_TERTIARY']}; color: {C['TEXT_PRIMARY']}; "
-            f"border: 1px solid {C['BORDER_LIGHT']}; border-radius: 5px; padding: 8px 16px; "
+            f"QPushButton {{ color: {C['TEXT_PRIMARY']}; "
+            f"{squircle_border_image('BUTTON', 'BUTTON')} padding: 4px 16px; min-height: 14px; "
             f"font-weight: 500; font-size: 9pt; }} "
-            f"QPushButton:hover {{ background-color: {C['BG_ELEVATED']}; border-color: {C['ACCENT']}; color: {C['ACCENT_HOVER']}; }} "
-            f"QPushButton:pressed {{ background-color: {C['ACCENT_PRESSED']}; color: {C['BG_PRIMARY']}; border-color: {C['ACCENT_PRESSED']}; }} "
-            f"QPushButton#primary {{ background-color: {C['ACCENT']}; color: {C['BG_PRIMARY']}; border: none; font-weight: 600; }} "
-            f"QPushButton#primary:hover {{ background-color: {C['ACCENT_HOVER']}; }} "
-            f"QPushButton#primary:pressed {{ background-color: {C['ACCENT_PRESSED']}; }}"
+            f"QPushButton:hover {{ {squircle_border_image('BUTTON_HOVER', 'BUTTON')} "
+            f"color: {C['ACCENT_HOVER']}; }} "
+            f"QPushButton:pressed {{ {squircle_border_image('BUTTON_PRESSED', 'BUTTON')} "
+            f"color: {C['BG_PRIMARY']}; }} "
+            f"QPushButton#primary {{ {squircle_border_image('PRIMARY', 'BUTTON')} "
+            f"color: {C['BG_PRIMARY']}; font-weight: 600; }} "
+            f"QPushButton#primary:hover {{ {squircle_border_image('PRIMARY_HOVER', 'BUTTON')} }} "
+            f"QPushButton#primary:pressed {{ {squircle_border_image('PRIMARY_PRESSED', 'BUTTON')} }}"
         )
         self._apply_model_combo_palette()
 
