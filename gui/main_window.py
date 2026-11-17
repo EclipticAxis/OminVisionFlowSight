@@ -32,10 +32,11 @@ from camera.capture import CameraCapture
 from camera.enumerator import CameraInfo, scan_cameras
 from camera.recorder import VideoRecorder
 from gui.camera_cell import CameraCell
+from gui.squircle import render_tile_to
 from gui.animations import AnimationHelper, Easing
 from gui.safe_widgets import WheelFocusComboBox, WheelFocusDoubleSpinBox, WheelFocusSpinBox
 from gui.settings_dialog import SettingsDialog
-from gui.theme import get_stylesheet
+from gui.theme import RADIUS, SQ_TILE_PAD, SQ_TILE_SCALE, get_stylesheet, squircle_slice
 
 if TYPE_CHECKING:
     # VisionCore 未来统一模型入口 —— 当前仅用于类型检查，不影响运行时。
@@ -990,19 +991,39 @@ class MainWindow(QMainWindow):
         group.start()
 
     def _update_rectangle_color_swatch(self) -> None:
+        # 背景色是运行时动态颜色，无法使用静态资产：按颜色哈希现场渲染 squircle
+        # 瓦片（每次颜色变化生成新文件名，避开 Qt 样式表 pixmap 缓存不刷新）。
+        # 注意：QSS 无法加载 file:/// URL，url() 内使用带引号的本地绝对路径。
+        radius = RADIUS["BUTTON"]
+        border_w = radius + 1
+        slice_px = squircle_slice(radius)
+        runtime_dir = Path(__file__).resolve().parent / "assets" / "squircle" / "_runtime"
+
+        def _apply_swatch(bg_hex: str, border_hex: str, text_color: str) -> None:
+            png = runtime_dir / (
+                f"swatch_{bg_hex.lstrip('#').lower()}_{border_hex.lstrip('#').lower()}_"
+                f"{radius}px@4x.png"
+            )
+            render_tile_to(
+                png, bg_hex, border_hex, radius,
+                pad=SQ_TILE_PAD, scale=SQ_TILE_SCALE,
+            )
+            self._rectangle_color_btn.setStyleSheet(
+                f"QPushButton#colorSwatchButton {{ background-color: transparent; "
+                f"border-style: solid; border-width: {border_w}px; "
+                f"border-image: url(\"{png.resolve().as_posix()}\") {slice_px} stretch stretch; "
+                f"color: {text_color}; }}"
+            )
+
         if self._ai_rectangle_target_rgb is None:
             self._rectangle_color_btn.setText("未选")
-            self._rectangle_color_btn.setStyleSheet(
-                "QPushButton#colorSwatchButton { background-color: #1A2238; color: #9AA8C7; border: 1px solid #32405F; border-radius: 5px; }"
-            )
+            _apply_swatch("#1A2238", "#32405F", "#9AA8C7")
             self._rectangle_color_clear_btn.setEnabled(False)
             return
         r, g, b = self._ai_rectangle_target_rgb
         text_color = "#0B1020" if (r * 0.299 + g * 0.587 + b * 0.114) > 150 else "#EAF1FF"
         self._rectangle_color_btn.setText("")
-        self._rectangle_color_btn.setStyleSheet(
-            f"QPushButton#colorSwatchButton {{ background-color: rgb({r}, {g}, {b}); color: {text_color}; border: 1px solid #EAF1FF; border-radius: 5px; }}"
-        )
+        _apply_swatch(f"#{r:02X}{g:02X}{b:02X}", "#EAF1FF", text_color)
         self._rectangle_color_clear_btn.setEnabled(True)
 
     @staticmethod

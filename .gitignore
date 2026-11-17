@@ -33,3 +33,5 @@ output/
 # OS
 Thumbs.db
 .DS_Store
+# Runtime-generated squircle tiles (color swatch etc.)
+gui/assets/squircle/_runtime/

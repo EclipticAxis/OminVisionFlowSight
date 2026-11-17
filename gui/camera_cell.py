@@ -13,6 +13,8 @@ from PyQt6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAnim
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import QWidget
 
+from gui.squircle import squircle_path
+
 if TYPE_CHECKING:
     # VisionCore 未来统一模型入口 —— 当前仅用于类型检查，不影响运行时。
     # CameraCell 的绘制逻辑保持不变；这些类型为未来迁移做准备。
@@ -171,6 +173,7 @@ class CameraCell(QWidget):
     double_clicked = pyqtSignal(int)
 
     _UI_RADIUS = 5
+    _CHIP_RADIUS = 5
     _BBOX_TTL = 2.0
     _MIN_REPAINT_INTERVAL = 1.0 / 30.0
     _MAX_DETECTION_FRAME_AGE = 0.28
@@ -1271,6 +1274,7 @@ class CameraCell(QWidget):
             self._label_text,
             QColor(11, 16, 32, 220),
             QColor("#EAF1FF"),
+            radius=self._CHIP_RADIUS,
         )
 
         # 设备名
@@ -1282,6 +1286,7 @@ class CameraCell(QWidget):
                 self._device_name,
                 QColor(11, 16, 32, 196),
                 QColor("#9AA8C7"),
+                radius=self._CHIP_RADIUS,
             )
 
         badges: list[tuple[str, QColor, QColor]] = []
@@ -1301,7 +1306,7 @@ class CameraCell(QWidget):
         for text, bg, fg in reversed(badges):
             width = self._measure_pill_width(text)
             x = current_right - width
-            self._draw_label_chip(painter, x, top_y, text, bg, fg)
+            self._draw_label_chip(painter, x, top_y, text, bg, fg, radius=self._CHIP_RADIUS)
             current_right = x - 10
 
         # 底部信息
@@ -1313,6 +1318,7 @@ class CameraCell(QWidget):
             f"FPS {self._current_fps:.1f}",
             QColor(11, 16, 32, 220),
             QColor("#EAF1FF"),
+            radius=self._CHIP_RADIUS,
         )
 
         if self._bbox_cache:
@@ -1323,6 +1329,7 @@ class CameraCell(QWidget):
                 f"目标 {len(self._bbox_cache)}",
                 QColor(11, 16, 32, 220),
                 QColor("#8FE0FF"),
+                radius=self._CHIP_RADIUS,
             )
 
     def _measure_pill_width(self, text: str) -> float:
@@ -1343,15 +1350,18 @@ class CameraCell(QWidget):
         text: str,
         bg_color: QColor,
         fg_color: QColor,
+        radius: float | None = None,
     ) -> None:
         painter.setFont(self._pill_font)
         width = self._measure_pill_width(text)
         rect = QRectF(x, y, width, 26)
+        chip_radius = self._CHIP_RADIUS if radius is None else radius
 
-        # 绘制背景
+        # 绘制背景（squircle 连续曲率圆角，替代 drawRoundedRect 的普通圆弧）
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(bg_color)
-        painter.drawRoundedRect(rect, self._UI_RADIUS, self._UI_RADIUS)
+        path = squircle_path(rect, chip_radius)
+        painter.fillPath(path, bg_color)
 
         # 绘制文字
         painter.setPen(fg_color)

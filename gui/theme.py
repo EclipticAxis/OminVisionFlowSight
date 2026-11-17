@@ -1,3 +1,6 @@
+from gui.squircle import asset_file
+
+
 COLORS: dict[str, str] = {
     # === 基础背景层（山田凉冷蓝灰基底） ===
     "BG_PRIMARY": "#0B1020",
@@ -65,6 +68,114 @@ TYPOGRAPHY = {
     "LABEL": "font-size: 8.5pt; font-weight: 500; letter-spacing: 0.01em;",
     "METRIC": "font-size: 9pt; font-weight: 600;",
 }
+
+# === 圆角半径（胶囊控件，按类别单独可调；视觉零变化默认值） ===
+RADIUS = {
+    "PILL": 5,      # QLabel#metricPill（含 accent/success/warning 变体）
+    "BUTTON": 5,    # QPushButton / #secondaryCompact / #topBarSettings
+    "CONTROL": 5,   # QComboBox / #featureCombo、QSpinBox/QDoubleSpinBox#featureCombo
+    "CHECK": 5,     # QCheckBox::indicator、QCheckBox#featureSwitch::indicator、QCheckBox#topBarFlip
+    "CARD": 5,      # #pathValue/#statusBanner/#heroCard/#sectionCard/#slotCard/#statRow/#aiFeaturePanel/#skeleton
+    "GROUPBOX": 5,  # QGroupBox
+    "TOOLTIP": 5,   # QToolTip
+    "SMALL": 3,     # QCheckBox#topBarFlip::indicator（小指示器）
+    "SCROLL": 2,    # QScrollBar track/handle
+}
+
+# === squircle（连续曲率圆角）资产清单（阶段 2 契约，单一定义源） ===
+# 颜色一律写 COLORS 的键名字符串，由消费方（tools/gen_squircle_assets.py /
+# 运行时动态生成）解析；radius 写 RADIUS 的键名字符串。
+# border_width 为烘焙进 PNG 的描边宽度（CSS px，默认 1）；None 表示无边框线。
+# gradient=(c1, c2) 时用对角渐变替代实底（如 heroCard）。
+# 同底同边同半径的规则共用 token。
+SQUIRCLE_ASSETS: dict[str, dict] = {
+    # --- 指标胶囊 ---
+    "PILL":         {"bg": "BG_TERTIARY",    "border": "BORDER_LIGHT", "radius": "PILL"},
+    "PILL_ACCENT":  {"bg": "ACCENT_SUBTLE",  "border": "ACCENT",       "radius": "PILL"},
+    "PILL_SUCCESS": {"bg": "SUCCESS_SUBTLE", "border": "SUCCESS",      "radius": "PILL"},
+    "PILL_WARNING": {"bg": "WARNING_SUBTLE", "border": "WARNING",      "radius": "PILL"},
+    # --- 卡片 / 面板 ---
+    "PATH_VALUE":      {"bg": "BG_TERTIARY", "border": "BORDER_LIGHT", "radius": "CARD"},
+    "STATUS_BANNER":   {"bg": "BG_GLASS",    "border": "BORDER_ACCENT", "radius": "CARD"},
+    "HERO_CARD":       {"bg": "#26241F",   "border": "BORDER_ACCENT", "radius": "CARD",
+                        "gradient": ("#2D2A23", "#1F1E1B")},
+    "CARD_SECONDARY":  {"bg": "BG_SECONDARY", "border": "BORDER",      "radius": "CARD"},
+    "CARD":            {"bg": "BG_TERTIARY",  "border": "BORDER_LIGHT", "radius": "CARD"},
+    "CARD_HOVER":      {"bg": "BG_ELEVATED",  "border": "BORDER_ACCENT", "radius": "CARD"},
+    "SKELETON":        {"bg": "BG_TERTIARY",  "border": None,          "radius": "CARD"},
+    # --- 顶部栏 ---
+    "TOPBAR_BTN":         {"bg": "BG_TERTIARY", "border": "BORDER_LIGHT", "radius": "BUTTON"},
+    "TOPBAR_BTN_HOVER":   {"bg": "BG_ELEVATED", "border": "ACCENT",       "radius": "BUTTON"},
+    "TOPBAR_BTN_PRESSED": {"bg": "ACCENT_PRESSED", "border": "ACCENT_PRESSED", "radius": "BUTTON"},
+    "TOPBAR_FLIP":        {"bg": "BG_TERTIARY", "border": "BORDER_LIGHT", "radius": "CHECK"},
+    "TOPBAR_FLIP_HOVER":  {"bg": "BG_ELEVATED", "border": "ACCENT",       "radius": "CHECK"},
+    "CHECK_SMALL":        {"bg": "BG_SECONDARY", "border": "BORDER_LIGHT", "radius": "SMALL"},
+    "CHECK_SMALL_CHECKED": {"bg": "ACCENT", "border": "ACCENT", "radius": "SMALL"},
+    # --- 复选框 ---
+    "CHECK":         {"bg": "BG_TERTIARY", "border": "BORDER_LIGHT", "radius": "CHECK", "border_width": 1.5},
+    "CHECK_HOVER":   {"bg": "BG_ELEVATED", "border": "ACCENT",       "radius": "CHECK", "border_width": 1.5},
+    "CHECK_CHECKED": {"bg": "ACCENT",      "border": "ACCENT",       "radius": "CHECK", "border_width": 1.5},
+    "FEATURE_SWITCH":          {"bg": "BG_SECONDARY", "border": "BORDER_LIGHT", "radius": "CHECK"},
+    "FEATURE_SWITCH_HOVER":    {"bg": "BG_ELEVATED",  "border": "ACCENT",       "radius": "CHECK"},
+    "FEATURE_SWITCH_CHECKED":  {"bg": "ACCENT",       "border": "ACCENT",       "radius": "CHECK"},
+    "FEATURE_SWITCH_DISABLED": {"bg": "BG_SECONDARY", "border": "BORDER",       "radius": "CHECK"},
+    # --- 按钮 ---
+    "BUTTON":         {"bg": "BG_TERTIARY", "border": "BORDER_LIGHT", "radius": "BUTTON"},
+    "BUTTON_HOVER":   {"bg": "BG_ELEVATED", "border": "ACCENT",       "radius": "BUTTON"},
+    "BUTTON_PRESSED": {"bg": "ACCENT_PRESSED", "border": "ACCENT_PRESSED", "radius": "BUTTON"},
+    "BUTTON_DISABLED": {"bg": "BG_SECONDARY", "border": "BORDER",     "radius": "BUTTON"},
+    "PRIMARY":         {"bg": "ACCENT",         "border": None, "radius": "BUTTON"},
+    "PRIMARY_HOVER":   {"bg": "ACCENT_HOVER",   "border": None, "radius": "BUTTON"},
+    "PRIMARY_PRESSED": {"bg": "ACCENT_PRESSED", "border": None, "radius": "BUTTON"},
+    "SECONDARY_PRESSED": {"bg": "BORDER", "border": "BORDER_LIGHT", "radius": "BUTTON"},
+    "SECONDARY_COMPACT":        {"bg": "BG_SECONDARY", "border": "BORDER_LIGHT", "radius": "BUTTON"},
+    "SECONDARY_COMPACT_HOVER":  {"bg": "BG_ELEVATED",  "border": "ACCENT",       "radius": "BUTTON"},
+    "DANGER_BTN":        {"bg": "DANGER",        "border": None, "radius": "BUTTON"},
+    "DANGER_BTN_HOVER":  {"bg": "DANGER_HOVER",  "border": None, "radius": "BUTTON"},
+    "DANGER_BTN_PRESSED": {"bg": "DANGER_PRESSED", "border": None, "radius": "BUTTON"},
+    "GHOST_HOVER":       {"bg": "BG_TERTIARY", "border": None, "radius": "BUTTON"},
+    # --- 下拉 / 输入控件 ---
+    "CONTROL":       {"bg": "BG_TERTIARY", "border": "BORDER_LIGHT", "radius": "CONTROL"},
+    "CONTROL_HOVER": {"bg": "BG_TERTIARY", "border": "ACCENT",       "radius": "CONTROL"},
+    "FEATURE_COMBO":          {"bg": "BG_SECONDARY", "border": "BORDER_LIGHT", "radius": "CONTROL"},
+    "FEATURE_COMBO_HOVER":    {"bg": "BG_SECONDARY", "border": "ACCENT",       "radius": "CONTROL"},
+    "FEATURE_COMBO_DISABLED": {"bg": "BG_SECONDARY", "border": "BORDER",       "radius": "CONTROL"},
+    "COMBO_VIEW":         {"bg": "BG_TERTIARY", "border": "BORDER",       "radius": "CONTROL"},
+    "COMBO_VIEW_FEATURE": {"bg": "BG_TERTIARY", "border": "BORDER_LIGHT", "radius": "CONTROL"},
+    "COMBO_ITEM":          {"bg": "BG_TERTIARY", "border": None, "radius": "CONTROL"},
+    "COMBO_ITEM_HOVER":    {"bg": "BG_ELEVATED", "border": None, "radius": "CONTROL"},
+    "COMBO_ITEM_SELECTED": {"bg": "ACCENT",      "border": None, "radius": "CONTROL"},
+    # --- 其余 ---
+    "GROUPBOX":   {"bg": "BG_TERTIARY", "border": "BORDER_LIGHT", "radius": "GROUPBOX"},
+    "TOOLTIP":    {"bg": "BG_TERTIARY", "border": "BORDER_ACCENT", "radius": "TOOLTIP"},
+    "DIALOG":     {"bg": "BG_PRIMARY",  "border": None,           "radius": "CARD"},
+}
+
+# === squircle 瓦片几何（必须与 tools/gen_squircle_assets.py 的生成参数一致） ===
+SQ_TILE_PAD = 1    # 瓦片透明边距（源像素组；scale=4 时 = 4px）
+SQ_TILE_SCALE = 4  # 资产渲染倍率（文件名 @4x）
+
+
+def squircle_slice(radius: int) -> int:
+    """border-image 切片（源像素）：角片完整覆盖 squircle 角弧，中央片保持非零。"""
+    return (SQ_TILE_PAD + radius) * SQ_TILE_SCALE - 1
+
+
+def squircle_border_image(token: str, radius_key: str, bw: int | None = None) -> str:
+    """胶囊控件的完整边框声明（QSS 单条规则内联使用）。
+
+    背景/描边/圆角均已烘焙进 PNG；border-width 只决定九宫格条带在控件上的宽度
+    （默认 radius+1，使烘焙的 1px 描边在屏幕上仍约为 1px）。
+    注意：Qt Style Sheets 无法加载 file:/// URL，必须使用带引号的本地绝对路径。
+    """
+    r = RADIUS[radius_key]
+    w = r + 1 if bw is None else bw
+    img = asset_file(token, r).resolve().as_posix()
+    return (
+        f"background-color: transparent; border-style: solid; "
+        f"border-width: {w}px; border-image: url(\"{img}\") "
+        f"{squircle_slice(r)} stretch stretch;"
+    )
 
 
 STYLESHEET = f"""
@@ -146,9 +257,7 @@ QLabel#fieldLabel {{
 }}
 
 QLabel#pathValue {{
-    background-color: {C['BG_TERTIARY']};
-    border: 1px solid {C['BORDER_LIGHT']};
-    border-radius: 5px;
+    {squircle_border_image('PATH_VALUE', 'CARD')}
     padding: 12px 14px;
     color: {C['TEXT_PRIMARY']};
     font-size: 9pt;
@@ -157,9 +266,7 @@ QLabel#pathValue {{
 
 /* === 状态标签 === */
 QLabel#statusBanner {{
-    background-color: {C['BG_GLASS']};
-    border: 1px solid {C['BORDER_ACCENT']};
-    border-radius: 5px;
+    {squircle_border_image('STATUS_BANNER', 'CARD')}
     padding: 14px;
     color: {C['TEXT_PRIMARY']};
     font-size: 9pt;
@@ -173,9 +280,7 @@ QLabel#status {{
 
 /* === 指标胶囊 === */
 QLabel#metricPill {{
-    background-color: {C['BG_TERTIARY']};
-    border: 1px solid {C['BORDER_LIGHT']};
-    border-radius: 5px;
+    {squircle_border_image('PILL', 'PILL')}
     padding: 8px 12px;
     color: {C['TEXT_PRIMARY']};
     font-size: 8.5pt;
@@ -183,20 +288,17 @@ QLabel#metricPill {{
 }}
 
 QLabel#metricPill#accent {{
-    background-color: {C['ACCENT_SUBTLE']};
-    border-color: {C['ACCENT']};
+    {squircle_border_image('PILL_ACCENT', 'PILL')}
     color: {C['ACCENT']};
 }}
 
 QLabel#metricPill#success {{
-    background-color: {C['SUCCESS_SUBTLE']};
-    border-color: {C['SUCCESS']};
+    {squircle_border_image('PILL_SUCCESS', 'PILL')}
     color: {C['SUCCESS']};
 }}
 
 QLabel#metricPill#warning {{
-    background-color: {C['WARNING_SUBTLE']};
-    border-color: {C['WARNING']};
+    {squircle_border_image('PILL_WARNING', 'PILL')}
     color: {C['WARNING']};
 }}
 
@@ -245,97 +347,71 @@ QLabel#topBarBrand {{
 }}
 
 QPushButton#topBarSettings {{
-    background-color: {C['BG_TERTIARY']};
+    {squircle_border_image('TOPBAR_BTN', 'BUTTON')}
     color: {C['TEXT_SECONDARY']};
-    border: 1px solid {C['BORDER_LIGHT']};
-    border-radius: 5px;
-    padding: 6px 16px;
+    padding: 3px 16px;
     min-height: 20px;
     font-size: 9pt;
     font-weight: 500;
 }}
 
 QPushButton#topBarSettings:hover {{
-    background-color: {C['BG_ELEVATED']};
-    border-color: {C['ACCENT']};
+    {squircle_border_image('TOPBAR_BTN_HOVER', 'BUTTON')}
     color: {C['ACCENT_HOVER']};
 }}
 
 QPushButton#topBarSettings:pressed {{
-    background-color: {C['ACCENT_PRESSED']};
+    {squircle_border_image('TOPBAR_BTN_PRESSED', 'BUTTON')}
     color: #1F1E1B;
-    border-color: {C['ACCENT_PRESSED']};
 }}
 
 QCheckBox#topBarFlip {{
-    background-color: {C['BG_TERTIARY']};
+    {squircle_border_image('TOPBAR_FLIP', 'CHECK')}
     color: {C['TEXT_SECONDARY']};
-    border: 1px solid {C['BORDER_LIGHT']};
-    border-radius: 5px;
-    padding: 5px 12px;
+    padding: 3px 12px;
     min-height: 20px;
     font-size: 9pt;
     font-weight: 500;
 }}
 
 QCheckBox#topBarFlip:hover {{
-    background-color: {C['BG_ELEVATED']};
-    border-color: {C['ACCENT']};
+    {squircle_border_image('TOPBAR_FLIP_HOVER', 'CHECK')}
     color: {C['ACCENT_HOVER']};
 }}
 
 QCheckBox#topBarFlip::indicator {{
     width: 13px;
     height: 13px;
-    border: 1px solid {C['BORDER_LIGHT']};
-    border-radius: 3px;
-    background-color: {C['BG_SECONDARY']};
+    {squircle_border_image('CHECK_SMALL', 'SMALL')}
 }}
 
 QCheckBox#topBarFlip::indicator:checked {{
-    background-color: {C['ACCENT']};
-    border-color: {C['ACCENT']};
+    {squircle_border_image('CHECK_SMALL_CHECKED', 'SMALL')}
 }}
 
 /* === 卡片组件 === */
 QFrame#heroCard {{
-    background-color: qlineargradient(
-        x1:0, y1:0, x2:1, y2:1,
-        stop:0 #2D2A23,
-        stop:0.5 #26241F,
-        stop:1 #1F1E1B
-    );
-    border: 1px solid {C['BORDER_ACCENT']};
-    border-radius: 5px;
+    {squircle_border_image('HERO_CARD', 'CARD')}
 }}
 
 QFrame#sectionCard {{
-    background-color: {C['BG_SECONDARY']};
-    border: 1px solid {C['BORDER']};
-    border-radius: 5px;
+    {squircle_border_image('CARD_SECONDARY', 'CARD')}
 }}
 
 QFrame#slotCard {{
-    background-color: {C['BG_TERTIARY']};
-    border: 1px solid {C['BORDER_LIGHT']};
-    border-radius: 5px;
+    {squircle_border_image('CARD', 'CARD')}
 }}
 
 QFrame#slotCard:hover {{
-    border-color: {C['BORDER_ACCENT']};
-    background-color: {C['BG_ELEVATED']};
+    {squircle_border_image('CARD_HOVER', 'CARD')}
 }}
 
 QFrame#statRow {{
-    background-color: {C['BG_TERTIARY']};
-    border: 1px solid {C['BORDER_LIGHT']};
-    border-radius: 5px;
+    {squircle_border_image('CARD', 'CARD')}
 }}
 
 QFrame#aiFeaturePanel {{
-    background-color: {C['BG_TERTIARY']};
-    border: 1px solid {C['BORDER_LIGHT']};
-    border-radius: 5px;
+    {squircle_border_image('CARD', 'CARD')}
 }}
 
 QCheckBox#featureSwitch {{
@@ -354,24 +430,19 @@ QCheckBox#featureSwitch:disabled {{
 QCheckBox#featureSwitch::indicator {{
     width: 18px;
     height: 18px;
-    border-radius: 5px;
-    border: 1px solid {C['BORDER_LIGHT']};
-    background-color: {C['BG_SECONDARY']};
+    {squircle_border_image('FEATURE_SWITCH', 'CHECK')}
 }}
 
 QCheckBox#featureSwitch::indicator:hover {{
-    border-color: {C['ACCENT']};
-    background-color: {C['BG_ELEVATED']};
+    {squircle_border_image('FEATURE_SWITCH_HOVER', 'CHECK')}
 }}
 
 QCheckBox#featureSwitch::indicator:checked {{
-    background-color: {C['ACCENT']};
-    border-color: {C['ACCENT']};
+    {squircle_border_image('FEATURE_SWITCH_CHECKED', 'CHECK')}
 }}
 
 QCheckBox#featureSwitch::indicator:disabled {{
-    background-color: {C['BG_SECONDARY']};
-    border-color: {C['BORDER']};
+    {squircle_border_image('FEATURE_SWITCH_DISABLED', 'CHECK')}
 }}
 
 QWidget#featureRow {{
@@ -390,43 +461,38 @@ QLabel#featureLabel {{
 }}
 
 QComboBox#featureCombo {{
-    background-color: {C['BG_SECONDARY']};
+    {squircle_border_image('FEATURE_COMBO', 'CONTROL')}
     color: {C['TEXT_PRIMARY']};
-    border: 1px solid {C['BORDER_LIGHT']};
-    border-radius: 5px;
-    padding: 5px 10px;
+    padding: 3px 10px;
     min-height: 20px;
     font-size: 8.5pt;
 }}
 
 QSpinBox#featureCombo, QDoubleSpinBox#featureCombo {{
-    background-color: {C['BG_SECONDARY']};
+    {squircle_border_image('FEATURE_COMBO', 'CONTROL')}
     color: {C['TEXT_PRIMARY']};
-    border: 1px solid {C['BORDER_LIGHT']};
-    border-radius: 5px;
     padding: 5px 10px;
     min-height: 20px;
     font-size: 8.5pt;
 }}
 
 QSpinBox#featureCombo:hover, QDoubleSpinBox#featureCombo:hover {{
-    border-color: {C['ACCENT']};
+    {squircle_border_image('FEATURE_COMBO_HOVER', 'CONTROL')}
 }}
 
 QSpinBox#featureCombo:disabled, QDoubleSpinBox#featureCombo:disabled {{
+    {squircle_border_image('FEATURE_COMBO_DISABLED', 'CONTROL')}
     color: {C['TEXT_DISABLED']};
-    border-color: {C['BORDER']};
 }}
 
 QComboBox#featureCombo:disabled {{
+    {squircle_border_image('FEATURE_COMBO_DISABLED', 'CONTROL')}
     color: {C['TEXT_DISABLED']};
-    border-color: {C['BORDER']};
 }}
 
 QComboBox#featureCombo QAbstractItemView {{
-    background-color: {C['BG_TERTIARY']};
+    {squircle_border_image('COMBO_VIEW_FEATURE', 'CONTROL')}
     color: {C['TEXT_PRIMARY']};
-    border: 1px solid {C['BORDER_LIGHT']};
     selection-background-color: {C['ACCENT']};
     selection-color: {C['BG_PRIMARY']};
     outline: none;
@@ -434,18 +500,18 @@ QComboBox#featureCombo QAbstractItemView {{
 }}
 
 QComboBox#featureCombo QAbstractItemView::item {{
-    background-color: {C['BG_TERTIARY']};
+    {squircle_border_image('COMBO_ITEM', 'CONTROL')}
     color: {C['TEXT_PRIMARY']};
     padding: 6px 10px;
     min-height: 22px;
 }}
 
 QComboBox#featureCombo QAbstractItemView::item:hover {{
-    background-color: {C['BG_ELEVATED']};
+    {squircle_border_image('COMBO_ITEM_HOVER', 'CONTROL')}
 }}
 
 QComboBox#featureCombo QAbstractItemView::item:selected {{
-    background-color: {C['ACCENT']};
+    {squircle_border_image('COMBO_ITEM_SELECTED', 'CONTROL')}
     color: {C['BG_PRIMARY']};
 }}
 
@@ -460,128 +526,116 @@ QComboBox#featureCombo QAbstractScrollArea::corner {{
 
 /* === 按钮 === */
 QPushButton {{
-    background-color: {C['BG_TERTIARY']};
+    {squircle_border_image('BUTTON', 'BUTTON')}
     color: {C['TEXT_PRIMARY']};
-    border: 1px solid {C['BORDER_LIGHT']};
-    border-radius: 5px;
-    padding: 10px 18px;
+    padding: 6px 18px;
     font-weight: 500;
     font-size: 9pt;
     min-height: 24px;
 }}
 
 QPushButton:hover {{
-    background-color: {C['BG_ELEVATED']};
-    border-color: {C['ACCENT']};
+    {squircle_border_image('BUTTON_HOVER', 'BUTTON')}
     color: {C['ACCENT_HOVER']};
 }}
 
 QPushButton:pressed {{
-    background-color: {C['ACCENT_PRESSED']};
+    {squircle_border_image('BUTTON_PRESSED', 'BUTTON')}
     color: {C['BG_PRIMARY']};
-    border-color: {C['ACCENT_PRESSED']};
 }}
 
 QPushButton:disabled {{
-    background-color: {C['BG_SECONDARY']};
+    {squircle_border_image('BUTTON_DISABLED', 'BUTTON')}
     color: {C['TEXT_DISABLED']};
-    border-color: {C['BORDER']};
 }}
 
 QPushButton#primary {{
-    background-color: {C['ACCENT']};
+    {squircle_border_image('PRIMARY', 'BUTTON')}
     color: #1F1E1B;
-    border: none;
     font-weight: 600;
     font-size: 9.5pt;
 }}
 
 QPushButton#primary:hover {{
-    background-color: {C['ACCENT_HOVER']};
+    {squircle_border_image('PRIMARY_HOVER', 'BUTTON')}
     color: #1F1E1B;
 }}
 
 QPushButton#primary:pressed {{
-    background-color: {C['ACCENT_PRESSED']};
+    {squircle_border_image('PRIMARY_PRESSED', 'BUTTON')}
 }}
 
 QPushButton#secondary {{
-    background-color: {C['BG_TERTIARY']};
+    {squircle_border_image('BUTTON', 'BUTTON')}
     color: {C['TEXT_PRIMARY']};
-    border: 1px solid {C['BORDER_LIGHT']};
 }}
 
 QPushButton#secondary:hover {{
-    background-color: {C['BG_ELEVATED']};
-    border-color: {C['ACCENT']};
+    {squircle_border_image('BUTTON_HOVER', 'BUTTON')}
 }}
 
 QPushButton#secondary:pressed {{
-    background-color: {C['BORDER']};
+    {squircle_border_image('SECONDARY_PRESSED', 'BUTTON')}
 }}
 
 QPushButton#secondaryCompact {{
-    background-color: {C['BG_SECONDARY']};
+    {squircle_border_image('SECONDARY_COMPACT', 'BUTTON')}
     color: {C['TEXT_SECONDARY']};
-    border: 1px solid {C['BORDER_LIGHT']};
-    border-radius: 5px;
     padding: 4px 10px;
     min-height: 20px;
     font-size: 8.5pt;
 }}
 
 QPushButton#secondaryCompact:hover {{
-    background-color: {C['BG_ELEVATED']};
-    border-color: {C['ACCENT']};
+    {squircle_border_image('SECONDARY_COMPACT_HOVER', 'BUTTON')}
     color: {C['TEXT_PRIMARY']};
 }}
 
 QPushButton#secondaryCompact:disabled {{
+    {squircle_border_image('BUTTON_DISABLED', 'BUTTON')}
     color: {C['TEXT_DISABLED']};
-    border-color: {C['BORDER']};
 }}
 
 QPushButton#danger {{
-    background-color: {C['DANGER']};
+    {squircle_border_image('DANGER_BTN', 'BUTTON')}
     color: #1F1E1B;
-    border: none;
     font-weight: 600;
 }}
 
 QPushButton#danger:hover {{
-    background-color: {C['DANGER_HOVER']};
+    {squircle_border_image('DANGER_BTN_HOVER', 'BUTTON')}
 }}
 
 QPushButton#danger:pressed {{
-    background-color: {C['DANGER_PRESSED']};
+    {squircle_border_image('DANGER_BTN_PRESSED', 'BUTTON')}
 }}
 
 QPushButton#ghost {{
+    /* 无背景无描边，显式关闭继承自 QPushButton 的 border-image */
+    border-image: none;
+    border-style: none;
     background-color: transparent;
     color: {C['TEXT_SECONDARY']};
-    border: none;
     padding: 8px 12px;
 }}
 
 QPushButton#ghost:hover {{
-    background-color: {C['BG_TERTIARY']};
+    {squircle_border_image('GHOST_HOVER', 'BUTTON')}
     color: {C['TEXT_PRIMARY']};
 }}
 
 /* === 下拉框 === */
 QComboBox {{
-    background-color: {C['BG_TERTIARY']};
+    {squircle_border_image('CONTROL', 'CONTROL')}
     color: {C['TEXT_PRIMARY']};
-    border: 1px solid {C['BORDER_LIGHT']};
-    border-radius: 5px;
-    padding: 10px 14px;
+    padding: 5px 14px;
     min-height: 28px;
     font-size: 9pt;
     font-weight: 500;
 }}
 
 QComboBox:hover {{
-    border-color: {C['ACCENT']};
+    {squircle_border_image('CONTROL_HOVER', 'CONTROL')}
 }}
 
 QComboBox::drop-down {{
@@ -598,10 +652,8 @@ QComboBox::down-arrow {{
 }}
 
 QComboBox QAbstractItemView {{
-    background-color: {C['BG_TERTIARY']};
+    {squircle_border_image('COMBO_VIEW', 'CONTROL')}
     color: {C['TEXT_PRIMARY']};
-    border: 1px solid {C['BORDER']};
-    border-radius: 5px;
     selection-background-color: {C['ACCENT']};
     selection-color: #1F1E1B;
     outline: none;
@@ -611,17 +663,16 @@ QComboBox QAbstractItemView {{
 QComboBox QAbstractItemView::item {{
     padding: 8px 14px;
     min-height: 28px;
-    background-color: {C['BG_TERTIARY']};
+    {squircle_border_image('COMBO_ITEM', 'CONTROL')}
     color: {C['TEXT_PRIMARY']};
-    border-radius: 5px;
 }}
 
 QComboBox QAbstractItemView::item:hover {{
-    background-color: {C['BG_ELEVATED']};
+    {squircle_border_image('COMBO_ITEM_HOVER', 'CONTROL')}
 }}
 
 QComboBox QAbstractItemView::item:selected {{
-    background-color: {C['ACCENT']};
+    {squircle_border_image('COMBO_ITEM_SELECTED', 'CONTROL')}
     color: #1F1E1B;
 }}
 
@@ -636,9 +687,7 @@ QComboBox QAbstractScrollArea::corner {{
 
 /* === 分组框 === */
 QGroupBox {{
-    background-color: {C['BG_TERTIARY']};
-    border: 1px solid {C['BORDER_LIGHT']};
-    border-radius: 5px;
+    {squircle_border_image('GROUPBOX', 'GROUPBOX')}
     margin-top: 14px;
     padding: 18px 14px 14px 14px;
     font-weight: 600;
@@ -671,19 +720,15 @@ QCheckBox {{
 QCheckBox::indicator {{
     width: 22px;
     height: 22px;
-    border-radius: 5px;
-    border: 1.5px solid {C['BORDER_LIGHT']};
-    background-color: {C['BG_TERTIARY']};
+    {squircle_border_image('CHECK', 'CHECK')}
 }}
 
 QCheckBox::indicator:hover {{
-    border-color: {C['ACCENT']};
-    background-color: {C['BG_ELEVATED']};
+    {squircle_border_image('CHECK_HOVER', 'CHECK')}
 }}
 
 QCheckBox::indicator:checked {{
-    background-color: {C['ACCENT']};
-    border-color: {C['ACCENT']};
+    {squircle_border_image('CHECK_CHECKED', 'CHECK')}
 }}
 
 QCheckBox::indicator:checked::after {{
@@ -710,17 +755,20 @@ QScrollArea#panelScroll {{
     background-color: transparent;
 }}
 
-/* === 滚动条 === */
+/* === 滚动条 ===
+   5px 细滚动条不使用 squircle border-image：border-width 条带会把 5px 宽
+   内容挤压成 1px 细线，滑块几乎不可见（设置对话框曾因此"看起来内容缺失"）。
+   纯色 + 2px 小圆角在 5px 宽度下与 squircle 视觉无差，是更合适的方案。 */
 QScrollBar:vertical {{
     background-color: {C['SCROLLBAR_BG']};
     width: 5px;
-    border-radius: 2px;
+    border-radius: {RADIUS['SCROLL']}px;
     margin: 0px;
 }}
 
 QScrollBar::handle:vertical {{
     background-color: {C['SCROLLBAR_HANDLE']};
-    border-radius: 2px;
+    border-radius: {RADIUS['SCROLL']}px;
     min-height: 40px;
 }}
 
@@ -740,13 +788,13 @@ QScrollBar::sub-page:vertical {{
 QScrollBar:horizontal {{
     background-color: {C['SCROLLBAR_BG']};
     height: 5px;
-    border-radius: 2px;
+    border-radius: {RADIUS['SCROLL']}px;
     margin: 0px;
 }}
 
 QScrollBar::handle:horizontal {{
     background-color: {C['SCROLLBAR_HANDLE']};
-    border-radius: 2px;
+    border-radius: {RADIUS['SCROLL']}px;
     min-width: 40px;
 }}
 
@@ -765,10 +813,8 @@ QScrollBar::sub-page:horizontal {{
 
 /* === 工具提示 === */
 QToolTip {{
-    background-color: {C['BG_TERTIARY']};
+    {squircle_border_image('TOOLTIP', 'TOOLTIP')}
     color: {C['TEXT_PRIMARY']};
-    border: 1px solid {C['BORDER_ACCENT']};
-    border-radius: 5px;
     padding: 8px 12px;
     font-size: 8.5pt;
     font-weight: 500;
@@ -776,8 +822,7 @@ QToolTip {{
 
 /* === 骨架屏 === */
 QWidget#skeleton {{
-    background-color: {C['BG_TERTIARY']};
-    border-radius: 5px;
+    {squircle_border_image('SKELETON', 'CARD')}
 }}
 
 /* === 呼吸灯状态 === */
