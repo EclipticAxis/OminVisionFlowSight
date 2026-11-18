@@ -2,13 +2,19 @@
 
 > 桌面级多路视频智能分析平台 —— 在一台普通 PC 上，同时接入多路摄像头，实时完成目标检测、跟踪、姿态与属性识别，并将结构化结果对外发布。
 
-**OminVisionFlowSight**（内部代号 *VisionDataPlatform*，简称 VDP）是一个基于 **PyQt6** 图形界面与 **YOLO** 检测体系的桌面应用。它通过"共享推理线程 + 跳帧卡尔曼预测"的设计，在 CPU / 集成显卡（DirectML）上即可流畅运行多路实时视觉分析，并提供模块化、可扩展的图像处理流水线架构（VisionCore）。
+[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue.svg)](./LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![Rust](https://img.shields.io/badge/tracker%20core-Rust%20(PyO3)-orange.svg)](./rust/omintrack)
+[![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](#技术栈)
+
+**English**: OminVisionFlowSight is a desktop multi-camera video analytics platform that runs on a single PC — real-time YOLO detection, multi-filter Kalman tracking (with an optional **Rust core**, ~37x faster in benchmark), pose/gesture and head-attribute recognition, structured event publishing, and a modular VisionCore pipeline, all behind a PyQt6 GUI. No GPU server required: it runs on CPU or a DirectML iGPU.
 
 ---
 
 ## 目录
 
-- [项目背景](#项目背景)
+- [项目概览](#项目概览)
+- [演示截图](#演示截图)
 - [功能特性](#功能特性)
 - [技术栈](#技术栈)
 - [快速开始](#快速开始)
@@ -16,39 +22,44 @@
 - [配置说明](#配置说明)
 - [项目结构](#项目结构)
 - [测试](#测试)
+- [文档](#文档)
 - [许可证](#许可证)
 - [贡献指南](#贡献指南)
 - [致谢](#致谢)
 
 ---
 
-## 项目背景
+## 项目概览
 
-在安防监控、工业质检、人机交互、出入口管理等场景中，多路视频的实时 AI 分析通常依赖 GPU 服务器集群，部署成本高、门槛高。本项目要解决的正是这些问题：
+在安防监控、工业质检、人机交互、出入口管理等场景中，多路视频的实时 AI 分析通常依赖 GPU 服务器集群，部署成本高、门槛高。OminVisionFlowSight（内部代号 *VisionDataPlatform*，简称 VDP）通过**共享推理线程 + 跳帧卡尔曼预测**的设计，在 CPU / 集成显卡（DirectML）上即可流畅完成最多 4 路视频源的并行采集、推理、跟踪与同步录像：
 
-1. **多路摄像头同时 AI 分析**：通过共享单一推理线程，最多 4 路视频源并行采集与推理，避免 GPU/CPU 资源争抢，单台 PC + USB 摄像头即可运行。
-2. **检测与跟踪一体化**：YOLO 检测 + 多滤波器卡尔曼跟踪，形成完整的目标生命周期管理（出现 → 跟踪 → 预测 → 丢失 → 重找回）。
-3. **多模型后端灵活切换**：同一工程内支持 YOLOv8 / YOLO26（PyTorch）、ONNX Runtime + DirectML、UHD 轻量人体检测等多种后端，根据模型文件名自动识别。
-4. **跳帧预测降低算力需求**：推理帧间隔（`infer_stride`）机制 + 卡尔曼预测填充中间帧，在维持视觉流畅度的同时大幅降低推理频率。
-5. **目标消失后重找回**：基于卡尔曼预测的 ROI 裁剪重检测，自动找回被遮挡后重新出现的目标。
-6. **运行时异常自适应恢复**：`_FilterAdaptor` + `_HealthMonitor` 双重机制，运行时自动检测并修正算法异常。
+- **检测与跟踪一体化**：YOLO 检测 + 多滤波器卡尔曼跟踪，覆盖目标完整生命周期（出现 → 跟踪 → 预测 → 丢失 → 重找回）；
+- **跟踪核心提供 Rust 实现（omintrack）**：与 Python 版逐帧等价，一行参数即可切换；
+- **多模型后端灵活切换**：YOLOv8 / YOLO26（PyTorch）、ONNX Runtime + DirectML、UHD 轻量人体检测，按模型文件名自动识别；
+- **模块化 VisionCore 架构**：流水线 / 事件总线 / 协议发布，便于二次开发与集成。
+
+## 演示截图
+
+> 🚧 待补充：计划展示（1）多路相机网格主界面、（2）检测 / 跟踪 / 骨架叠加效果、（3）设置对话框。
+> 运行 `python main.py` 后截图，放入 `docs/images/` 并在本节引用即可（欢迎通过 Issue 或 PR 分享你的运行截图）。
 
 ## 功能特性
 
+- 🚀 **Rust 跟踪内核（新）**：跟踪核心（UKF 滤波族 / AUTO 自适应 / 匹配引擎 / 重检测与生命周期管理）的 Rust 重写版，经 PyO3 暴露为 `omintrack.RustTracker`。与 Python 版**逐帧等价**（18 个等价性测试，数值容差 1e-6，ID / 状态机精确一致），基准实测**平均约 37x 加速**（20 tracks x 500 帧，3 滤波器 x 3 匹配策略）。默认仍为 Python 后端，`backend="rust"` 或环境变量 `OMINTRACK_BACKEND=rust` 即可切换，调用方零改动。
 - 📷 **多路相机采集**：多路视频源并行采集与录制，支持 RTSP / IP 摄像头 / USB 摄像头 / 本地文件等输入（PyAV DirectShow），多路 H.264 MP4 同步录像。
 - 🎯 **多维度目标检测**：
   - YOLOv8 / YOLO26 通用目标检测（COCO 80 类）
   - OBB 有向目标检测（旋转框）
-  - UHD 64×64 轻量人体检测（CPU 优先）
+  - UHD 64x64 轻量人体检测（CPU 优先）
   - 矩形物体检测（Canny + 轮廓 + 线性卡尔曼跟踪）
-- 🧭 **多目标跟踪**：纯 NumPy 实现的卡尔曼滤波体系，支持 UKF / MCUKF / Manifold UKF 与 AUTO 自适应切换，OBB polygon 关联跟踪。
+- 🧭 **多目标跟踪**：UKF / MCUKF / Manifold UKF 滤波族 + AUTO 自适应切换，OBB polygon 关联跟踪；跳帧（`infer_stride`）卡尔曼预测填充中间帧；目标消失后基于预测的 ROI 重检测自动找回。
 - 🦴 **姿态与手势**：17 点 COCO 人体骨架绘制；基于几何规则的身体姿态手势识别（举手 / 摔倒 / 蹲下 / 双臂展开等）。
 - 🧢 **头部属性识别**：帽子 / 口罩 / 墨镜 / 眼睛开闭 / 嘴巴开闭五维属性分类。
-- 🌫️ **图像增强**：双边滤波 / NL-Means 去噪预处理，可选 ESPCN ×4 小目标超分辨率增强。
-- 🔌 **可扩展流水线（VisionCore）**：模块化的 Pipeline / Stage 体系，内置去噪、检测、跟踪、目标状态、重检、事件等阶段，支持插件注册（Plugin Registry）与影子（Shadow）旁路验证，可在不影响主链路的情况下逐步重构。
+- 🌫️ **图像增强**：双边滤波 / NL-Means 去噪预处理，可选 ESPCN x4 小目标超分辨率增强。
+- 🔌 **可扩展流水线（VisionCore）**：模块化 Pipeline / Stage 体系，内置去噪、检测、跟踪、目标状态、重检、事件等阶段，支持插件注册（Plugin Registry）与影子（Shadow）旁路验证，可在不影响主链路的情况下逐步重构。
 - 📡 **事件总线与协议发布**：Qt 信号槽解耦的 EventBus 贯通采集 / 推理 / GUI / 录制线程；支持 JSON / CBOR 序列化，提供 UDP、Console 等适配器将目标状态对外发布。
 - 🖥️ **专业暗色 GUI**：Fusion 风格 + 动画系统的深色主题界面，支持多相机网格布局、启动画面、设置对话框与大量功能开关。
-- 🧪 **完善的测试**：`tests/` 下 40+ 个 pytest 单元测试，覆盖流水线各阶段、序列化、事件总线、目标管理等模块。
+- 🧪 **完善的测试**：`tests/` 下 1270+ 个 pytest 用例，覆盖流水线各阶段、序列化、事件总线、跟踪器行为快照与 Python/Rust 等价性。
 
 > 提示：MediaPipe 手部手指手势（OK / 点赞 / 数字 1~5 / 握拳等）在当前版本因版本兼容性问题默认关闭，身体姿态手势不受影响。
 
@@ -56,38 +67,32 @@
 
 | 类别 | 技术 | 用途 |
 |------|------|------|
-| 语言 | Python 3.11 | 全部实现 |
+| 语言 | Python 3.11 / Rust | 应用主体 / 跟踪内核 |
 | GUI | PyQt6 | 主窗口、相机网格、设置对话框、信号槽、动画 |
 | 视觉 / 图像 | OpenCV, PyAV | 采集、预处理、去噪、矩形检测、录像 |
 | 检测 | ultralytics, PyTorch, ONNX Runtime (DirectML) | YOLOv8 / YOLO26 检测、OBB、姿态、UHD、CHC 属性 |
-| 数值计算 | NumPy, SciPy | 卡尔曼滤波（UKF / MCUKF / Manifold UKF）等算法 |
+| 跟踪内核 | Rust + PyO3 + nalgebra（maturin 构建） | UKF / MCUKF / Manifold UKF、匹配引擎、轨迹生命周期 |
+| 数值计算 | NumPy, SciPy | Python 侧滤波参考实现与帧相关计算 |
 | 协议 | 自定义 JSON / CBOR 序列化 | 目标状态的结构化发布 |
-| 测试 | pytest | 单元测试 |
+| 测试 | pytest | 单元测试、golden 快照、Python/Rust 等价性对拍 |
 
-> 环境说明：采集链路（PyAV DirectShow）与 `onnxruntime-directml` 依赖主要面向 **Windows**。在其他操作系统上运行时，可将 `onnxruntime-directml` 替换为通用 CPU 版 `onnxruntime`，采集后端也可能需要调整。
+> 环境说明：采集链路（PyAV DirectShow）与 `onnxruntime-directml` 依赖主要面向 **Windows**。其他操作系统可运行检测 / 跟踪核心逻辑，但采集与 DirectML 加速需自行适配。
 
 ## 快速开始
 
-### 环境要求
-
-- Windows 10 / 11（推荐；DirectShow 采集与 DirectML 加速）
-- Python 3.11
-- 无需额外工具（`models/` 目录中的模型权重已随仓库直接分发）
-
-### 安装步骤
+### 1. 克隆与安装
 
 ```bash
-# 1. 克隆仓库（模型权重已包含在仓库中）
 git clone https://github.com/EclipticAxis/OminVisionFlowSight.git
 cd OminVisionFlowSight
 
-# 2. 创建虚拟环境并安装依赖（Windows 示例）
+# 创建虚拟环境并安装依赖（Windows 示例）
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 启动主程序
+### 2. 启动主程序
 
 ```bash
 # 图形界面（多路相机网格）
@@ -104,6 +109,24 @@ pause
 ```
 
 首次启动后，可通过 GUI 的**设置对话框**开闭各项功能（人体检测、骨骼、手势、矩形检测、去噪、滤波器类型、ROI 重检、头部属性等）。
+
+### 3.（可选）启用 Rust 跟踪内核
+
+默认使用纯 Python 跟踪后端，零构建即可运行。如需约 37x 的跟踪性能，安装 [Rust 工具链](https://rustup.rs/) 后构建扩展：
+
+```powershell
+pip install maturin
+maturin develop --manifest-path rust\omintrack\Cargo.toml --release
+```
+
+然后任选其一启用：
+
+```python
+tracker = DetectionTracker(backend="rust")   # 代码显式指定
+# 或设置环境变量 OMINTRACK_BACKEND=rust，所有默认构造点自动切换
+```
+
+构建细节与国内镜像加速见 [rust/omintrack/README.md](./rust/omintrack/README.md)。
 
 ## 使用示例
 
@@ -139,17 +162,18 @@ python demo.py --camera "HD Webcam" --model models/yolov8n.pt --conf 0.5
 ```
 OminVisionFlowSight/
 ├── ai/             # 主链路：推理控制、多模型后端、检测/跟踪/手势/头部属性/矩形检测
+├── rust/omintrack/ # Rust 跟踪内核（PyO3 扩展 crate）
 ├── camera/         # 相机采集、枚举、录制
 ├── common/         # 通用工具（PyAV 采集、YOLO 检测器、目标数据结构）
 ├── gui/            # PyQt6 图形界面（主窗口、相机格、主题、动画、设置对话框）
 ├── visioncore/     # 新架构：模块化流水线 / 事件总线 / 协议 / 插件 / 目标管理（影子旁路）
 ├── config/         # 运行配置（visioncore_pipeline.json）
 ├── models/         # 模型权重文件（随仓库直接分发）
-├── tests/          # pytest 单元测试
+├── tests/          # pytest 单元测试（含跟踪器等价性与 golden 快照）
 ├── docs/           # 各阶段的设计、审计与里程碑报告
 ├── architecture/   # 架构梳理、审计报告与全量档案文档
 ├── tools/          # 辅助工具（如 MOT 评估脚本）
-├── benchmark/      # 序列化性能基准
+├── benchmark/      # 性能基准（序列化、跟踪器 Python/Rust 对比）
 ├── main.py         # GUI 主程序入口
 ├── demo.py         # 最小可运行单路 Demo
 ├── requirements.txt
@@ -160,8 +184,23 @@ OminVisionFlowSight/
 ## 测试
 
 ```bash
-pytest tests/
+pytest tests/                                          # 全部用例（1270+）
+pytest tests/test_tracker_rust_equivalence.py          # Python/Rust 跟踪器逐帧等价性（18 例）
+pytest tests/test_tracker_snapshot.py                  # 跟踪器行为 golden 快照（13 场景）
+pytest tests/test_tracker_snapshot.py --update-golden  # 行为变更后再生成快照
+python benchmark/benchmark_tracker_rust.py             # 跟踪器性能基准（Python vs Rust）
 ```
+
+> 说明：全部跟踪器相关用例通过；另有 17 个架构守护用例在整跑时受套件级 import 顺序与 Windows 中文区域编码影响而失败（单独运行均通过），属既有测试隔离问题，正在治理。
+
+## 文档
+
+`docs/` 与 `architecture/` 收录了完整的演进文档，精选入口：
+
+- **架构与规划**：[战略路线图](./docs/strategic-roadmap.md)、[VisionCore 流水线基础](./docs/pipeline-foundation.md)、[SentinelTrack 2.0 架构蓝图](./docs/sentineltrack-2.0-architecture-blueprint.md)
+- **跟踪与滤波**：[MCUKF / Manifold UKF 方案](./docs/mcukf-manifold-ukf-plan.md)、[AUTO 自适应滤波](./docs/auto-filter-adaptive-plan.md)、[跟踪阶段](./docs/tracker-stage.md)、[Rust 内核说明](./rust/omintrack/README.md)
+- **性能**：[性能退化分析](./docs/performance-degradation-analysis.md)、[CBOR 基准](./docs/cbor-benchmark.md)
+- **插件与协议**：[插件注册表](./docs/plugin-registry.md)、[状态发布](./docs/state-publisher.md)、[UDP 适配器](./docs/udp-adapter.md)
 
 ## 许可证
 
@@ -196,11 +235,6 @@ pytest tests/
 
 - [Ultralytics](https://github.com/ultralytics) — YOLOv8 / YOLO26 检测与姿态模型；
 - [PINTO0309](https://github.com/PINTO0309) — 集成的 UHD 轻量人体检测与 CHC 头部属性 ONNX 模型；
+- [PyO3](https://pyo3.rs/) / [maturin](https://github.com/PyO3/maturin) / [nalgebra](https://nalgebra.org/) — Rust 跟踪内核的扩展绑定、构建与线性代数基础；
 - [PolyForm Project](https://polyformproject.org/) — PolyForm Noncommercial License 1.0.0；
 - 以及所有在 `docs/` 与 `architecture/` 中留下设计与审计文档的贡献者。
-
-## 截图
-
-> 待补充：项目运行效果与 GUI 界面截图将在此处展示。
-
-*（当前仓库暂无演示截图，欢迎通过 Issue 或 PR 分享你的运行截图。）*
