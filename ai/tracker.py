@@ -722,6 +722,19 @@ class _Track:
 class DetectionTracker:
     """轻量跟踪器，每帧调用 update() 即可。"""
 
+    def __new__(cls, *args, backend: str | None = None, **kwargs):
+        """后端开关：backend="rust" 或环境变量 OMINTRACK_BACKEND=rust 时，
+        构造返回 ai.tracker_backend.RustDetectionTracker（公开 API 一致）。
+        默认 "python"，行为与原实现完全一致。"""
+        if cls is DetectionTracker:
+            if backend is None:
+                import os
+                backend = os.environ.get("OMINTRACK_BACKEND", "python")
+            if backend == "rust":
+                from ai.tracker_backend import RustDetectionTracker
+                return RustDetectionTracker(*args, **kwargs)
+        return super().__new__(cls)
+
     def __init__(
         self,
         iou_threshold: float = 0.25,
@@ -741,6 +754,7 @@ class DetectionTracker:
         reid_backend=None,
         reid_min_tracks: int = 3,
         reid_stride: int = 3,
+        backend: str | None = None,  # 由 __new__ 消费，python 后端忽略
     ):
         self._iou_threshold = iou_threshold
         self._max_misses = max_misses

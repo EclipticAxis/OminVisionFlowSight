@@ -1,0 +1,118 @@
+{
+ "frames": [
+  [
+   {
+    "confidence": 0.9,
+    "keypoints": [],
+    "label": "person",
+    "predicted_only": false,
+    "track_id": 1,
+    "track_state": "normal",
+    "x1": 0.24,
+    "x2": 0.36,
+    "y1": 0.32,
+    "y2": 0.48
+   }
+  ],
+  [
+   {
+    "confidence": 0.9,
+    "keypoints": [],
+    "label": "person",
+    "predicted_only": false,
+    "track_id": 1,
+    "track_state": "normal",
+    "x1": 0.242570732,
+    "x2": 0.362570732,
+    "y1": 0.32,
+    "y2": 0.48
+   }
+  ],
+  [
+   {
+    "confidence": 0.9,
+    "keypoints": [],
+    "label": "person",
+    "predicted_only": false,
+    "track_id": 1,
+    "track_state": "normal",
+    "x1": 0.246282846,
+    "x2": 0.366283276,
+    "y1": 0.320000143,
+    "y2": 0.480000573
+   }
+  ],
+  [
+   {
+    "confidence": 0.69,
+    "keypoints": [],
+    "label": "person",
+    "predicted_only": false,
+    "track_id": 1,
+    "track_state": "redetected",
+    "x1": 0.248944266,
+    "x2": 0.368944418,
+    "y1": 0.31999992,
+    "y2": 0.480000071
+   }
+  ]
+ ],
+ "meta": [
+  {
+   "adaptor_type": null,
+   "tracks": {
+    "1": {
+     "attempts": 0,
+     "hits": 1,
+     "kalman": "ukf",
+     "misses": 0,
+     "state": "normal"
+    }
+   }
+  },
+  {
+   "adaptor_type": null,
+   "tracks": {
+    "1": {
+     "attempts": 0,
+     "hits": 2,
+     "kalman": "ukf",
+     "misses": 0,
+     "state": "normal"
+    }
+   }
+  },
+  {
+   "adaptor_type": null,
+   "tracks": {
+    "1": {
+     "attempts": 0,
+     "hits": 3,
+     "kalman": "ukf",
+     "misses": 0,
+     "state": "normal"
+    }
+   }
+  },
+  {
+   "adaptor_type": null,
+   "tracks": {
+    "1": {
+     "attempts": 0,
+     "hits": 4,
+     "kalman": "ukf",
+     "misses": 0,
+     "state": "redetected"
+    }
+   }
+  }
+ ],
+ "redetect_calls": [
+  [
+   0.248944266,
+   0.31999992,
+   0.368944418,
+   0.480000071
+  ]
+ ]
+}
