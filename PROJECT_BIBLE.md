@@ -861,8 +861,8 @@ F:\VisionBata\
 
 ### 11.1 版本信息
 
-- **版本号**：1.1.1
-- **最近重大更新**：2026-07-10（OBB Tracker 第二阶段完成）
+- **版本号**：1.2.0
+- **最近重大更新**：2026-11-18（omintrack Rust 跟踪内核）
 
 ### 11.2 已完成的重大特性
 
@@ -878,6 +878,9 @@ F:\VisionBata\
 | 2026-07-09 | YOLO26 Detect / OBB 集成 | ✅ |
 | 2026-07-09 | 识别失效修复（np.diag bug） | ✅ |
 | 2026-07-10 | OBB Tracker 第二阶段（polygon 关联） | ✅ |
+| 2026-11-17 | Squircle 连续曲率圆角 GUI（PR #1，[设计](docs/squircle-capsule-widgets.md)） | ✅ |
+| 2026-11-18 | omintrack Rust 跟踪内核（PR #2，[设计](docs/rust-tracker-core.md)） | ✅ |
+| 2026-11-19 | 守护测试修复（子进程隔离 + UTF-8，全套件 1277 通过） | ✅ |
 
 ### 11.3 已知问题
 
@@ -887,7 +890,7 @@ F:\VisionBata\
 | DirectML 某些 ONNX 模型可能 fallback CPU | 低 | 取决于 GPU 驱动 |
 | UHD 64x64 模型在随机噪声上假阳性较多 | 低 | 依赖 tracker 置信度过滤 |
 | `start.bat` 硬编码绝对路径 | 低 | 文档已知 |
-| 测试覆盖率低（仅 OBB 第二阶段有测试） | 中 | 待补充 |
+| Rust 扩展未构建时 rust 跟踪后端不可用 | 低 | 默认 python 后端不受影响；构建见 [omintrack 设计文档](docs/rust-tracker-core.md) |
 
 ---
 
@@ -908,9 +911,8 @@ F:\VisionBata\
 
 | 问题 | 说明 |
 |------|------|
-| **测试覆盖极低** | 仅 `tests/test_obb_stage2.py` 覆盖 polygon IoU 和 OBB 关联 |
-| **无集成测试** | 无端到端测试验证采集→推理→显示的完整链路 |
-| **无性能回归测试** | A/B 测试协议已设计（`docs/performance-degradation-analysis.md` 4.2 节）但未自动化 |
+| **无集成测试** | 无端到端测试验证采集→推理→显示的完整链路；单元/契约/跟踪等价性测试共 1277 项 |
+| **无性能回归测试** | A/B 测试协议已设计（`docs/performance-degradation-analysis.md` 4.2 节）但未自动化；跟踪器已有基准脚本（`benchmark/benchmark_tracker_rust.py`） |
 
 ### 12.3 文档层面
 
@@ -1052,7 +1054,11 @@ if _is_mynew_model(path):
 |------|------|------|
 | `main.py` | ✅ | 入口与启动流程 |
 | `ai/inference.py` | ✅ | **核心**：InferWorker 推理线程 |
-| `ai/tracker.py` | ✅ | **核心**：DetectionTracker + UKF 族 |
+| `ai/tracker.py` | ✅ | **核心**：DetectionTracker + UKF 族（Python 参考实现） |
+| `ai/tracker_backend.py` | ✅ | **核心**：Rust/Python 双后端适配层 |
+| `rust/omintrack/src/tracker.rs` | ✅ | **核心**：Rust 跟踪核心（等价契约见 [rust-tracker-core](docs/rust-tracker-core.md)） |
+| `gui/squircle.py` + `gui/theme.py` | 推荐 | squircle 圆角基础设施与资产清单 |
+| `tools/gen_squircle_assets.py` | 按需 | squircle 资产再生成 |
 | `ai/detection.py` | ✅ | **核心**：Detection/Keypoint 数据模型 |
 | `ai/model_task.py` | ✅ | ModelTask 枚举 |
 | `gui/main_window.py` | ✅ | 主窗口 + 信号槽调度 |
@@ -1067,7 +1073,7 @@ if _is_mynew_model(path):
 
 1. 本白皮书（PROJECT_BIBLE.md）
 2. `ai/detection.py`（理解核心数据类型）
-3. `ai/tracker.py` 前 80 行（理解 UKF 基类和跟踪接口）
+3. `ai/tracker.py` 前 80 行 + [omintrack 设计文档](docs/rust-tracker-core.md)（理解 UKF 基类、跟踪接口与双后端契约）
 4. `ai/inference.py` 的 `run()` 方法（理解推理管线）
 5. `gui/main_window.py` 的 `_on_camera_selected()` 方法（理解信号槽链路）
 
@@ -1076,9 +1082,11 @@ if _is_mynew_model(path):
 | 任务 | 切入文件 | 重点关注 |
 |------|----------|----------|
 | 添加新检测模型 | `ai/inference.py::_initialize_backend` + `_run_inference` | 模仿 `_is_uhd_model` 模式 |
-| 修改跟踪算法 | `ai/tracker.py::_DetectionUKF` | UKF 参数在类常量中 |
-| 调整 GUI 布局 | `gui/main_window.py::_build_control_panel` | QVBoxLayout 结构 |
-| 修改检测框绘制 | `gui/camera_cell.py::_rebuild_overlay_cache` | QPainter 绘制逻辑 |
+| 修改跟踪算法 | `rust/omintrack/src/tracker.rs` + `ai/tracker.py`（**两侧同步**） | 契约见 [rust-tracker-core](docs/rust-tracker-core.md) §3；改完跑等价性对拍，行为变更用 `--update-golden` 再生成快照 |
+| 切换跟踪后端 | `ai/tracker_backend.py` + `DetectionTracker(backend=...)` | 默认 python；`OMINTRACK_BACKEND=rust` 全局切换 |
+| 调整 GUI 布局 | `gui/main_window.py::_build_control_panel` | QVBoxLayout 结构；圆角为 squircle 贴图体系 |
+| 修改控件圆角/颜色 | `gui/theme.py::SQUIRCLE_ASSETS` → 重跑 `tools/gen_squircle_assets.py` | 单一事实源，禁止手改 PNG；见 [squircle 设计](docs/squircle-capsule-widgets.md) |
+| 修改检测框绘制 | `gui/camera_cell.py::_rebuild_overlay_cache` | QPainter 绘制逻辑；叠加 chip 走矢量 squircle 路径 |
 | 调整配置项 | `gui/settings_dialog.py::__init__` | QSettings 键 + 控件创建 |
 | 添加手势 | `ai/gesture_recognizer.py::detect` | 17 点关键点的几何规则 |
 
@@ -1087,7 +1095,8 @@ if _is_mynew_model(path):
 | 决策 | 原因 | 不应轻易更改 |
 |------|------|-------------|
 | 1 个共享推理线程 | 避免 GPU 资源争抢和多模型实例内存爆炸 | ✅ |
-| 纯 NumPy 卡尔曼 | 零外部滤波库依赖，完全可控 | ✅ |
+| 跟踪双实现（Python 参考 + Rust 性能） | Python 保证可移植与可读，Rust 提供性能；等价性测试锁定行为 | ✅（禁止只改一侧，见 [契约](docs/rust-tracker-core.md) §3.3） |
+| squircle 资产单一定义源（theme.SQUIRCLE_ASSETS + 生成器） | 样式一致性机器可查（契约测试三方比对） | ✅ |
 | 归一化坐标 | 分辨率无关，跨摄像头一致 | ✅ |
 | QSettings 持久化 | 跨会话配置记忆 | ✅ |
 | 信号槽解耦 | 线程安全，独立生命周期 | ✅ |

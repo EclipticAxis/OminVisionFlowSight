@@ -198,7 +198,8 @@ python benchmark/benchmark_tracker_rust.py             # 跟踪器性能基准�
 `docs/` 与 `architecture/` 收录了完整的演进文档，精选入口：
 
 - **架构与规划**：[战略路线图](./docs/strategic-roadmap.md)、[VisionCore 流水线基础](./docs/pipeline-foundation.md)、[SentinelTrack 2.0 架构蓝图](./docs/sentineltrack-2.0-architecture-blueprint.md)
-- **跟踪与滤波**：[MCUKF / Manifold UKF 方案](./docs/mcukf-manifold-ukf-plan.md)、[AUTO 自适应滤波](./docs/auto-filter-adaptive-plan.md)、[跟踪阶段](./docs/tracker-stage.md)、[Rust 内核说明](./rust/omintrack/README.md)
+- **跟踪与滤波**：[MCUKF / Manifold UKF 方案](./docs/mcukf-manifold-ukf-plan.md)、[AUTO 自适应滤波](./docs/auto-filter-adaptive-plan.md)、[跟踪阶段](./docs/tracker-stage.md)、[Rust 内核设计契约](./docs/rust-tracker-core.md)、[Rust 构建说明](./rust/omintrack/README.md)
+- **GUI 与主题**：[squircle 连续曲率圆角](./docs/squircle-capsule-widgets.md)
 - **性能**：[性能退化分析](./docs/performance-degradation-analysis.md)、[CBOR 基准](./docs/cbor-benchmark.md)
 - **插件与协议**：[插件注册表](./docs/plugin-registry.md)、[状态发布](./docs/state-publisher.md)、[UDP 适配器](./docs/udp-adapter.md)
 
