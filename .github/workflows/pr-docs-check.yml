@@ -1,0 +1,53 @@
+name: pr-docs-check
+
+# 内容向 PR 的文档沉淀强制检查（对应 PROJECT_BIBLE.md §17）。
+# 规则：PR 触及代码路径，却未触碰 docs/、PROJECT_BIBLE.md、README.md，
+# 且 PR 描述未声明豁免（[docs-skip] / 无需文档 / 无文档需求）时，
+# 自动发表评论并将本检查置为失败。
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  docs-sediment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check docs sediment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const CODE = /^(ai|visioncore|rust|gui|camera|common|config|tools)\/|^(main|demo)\.py$|^requirements\.txt$/;
+            const DOCS = /^(docs\/|PROJECT_BIBLE\.md$|README\.md$|^CONTRIBUTING\.md$|^AGENTS\.md$)/;
+            const EXEMPT = /\[docs-skip\]|无需文档|无文档需求/;
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              { owner, repo, pull_number: pr.number, per_page: 100 }
+            );
+            const touchedCode = files.filter(f => CODE.test(f.filename)).map(f => f.filename);
+            const touchedDocs = files.some(f => DOCS.test(f.filename));
+            const body = pr.body || "";
+            if (touchedCode.length === 0 || touchedDocs || EXEMPT.test(body)) {
+              core.info("docs-sediment check passed (no code change, docs included, or exempted).");
+              return;
+            }
+            const comment = [
+              "👋 这个 PR 修改了代码（如 `" + touchedCode.slice(0, 5).join("`, `") + "` …），",
+              "但没有包含文档沉淀（`docs/`、`PROJECT_BIBLE.md` 或 `README.md`）。",
+              "",
+              "按本仓库约定（`PROJECT_BIBLE.md` §17），**内容向 PR 必须把隐性契约显性化**：",
+              "在 `docs/` 新增或更新设计文档，并同步 `PROJECT_BIBLE.md` 相关小节。",
+              "",
+              "如果本 PR 确实无需文档（纯格式化、注释、无行为变化），",
+              "请在 PR 描述中加入 `[docs-skip]` 或说明「无需文档」，本检查将自动通过。",
+            ].join("\n");
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: pr.number, body: comment,
+            });
+            core.setFailed("content PR without docs sediment (see PR comment)");

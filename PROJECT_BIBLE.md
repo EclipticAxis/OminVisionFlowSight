@@ -1113,6 +1113,44 @@ if _is_mynew_model(path):
 | `*uhd*` / `*ultratinyod*` | UHD 人体检测 | UhdBackend |
 | `*chc*` | 头部属性分类 | HeadClassificationBackend |
 
+## 17. 文档沉淀规范（PR 契约）
+
+> 任何**内容向 PR**（功能、行为变更、缺陷修复）都必须把其**隐性契约显性化**：按本节规范将设计意图、行为约定、维护要点沉淀进仓库文档体系，使其对人与 AI Agent 机器可读。
+
+### 17.1 适用范围
+
+| 类型 | 例子 | 是否要求沉淀 |
+|------|------|--------------|
+| 内容向 | 新功能、行为/语义变更、缺陷修复、契约调整 | ✅ 必须 |
+| 非内容向 | 纯格式化、注释/文档 typo、无行为变化的机械重命名、依赖补丁升级 | 可豁免（PR 描述中注明即可） |
+
+### 17.2 沉淀物清单
+
+内容向 PR 必须至少包含：
+
+1. **设计文档**：`docs/<topic>.md`（新主题）或更新既有文档；
+2. **PROJECT_BIBLE.md 同步**：§11.2 特性表加行；如改变架构决策/切入点/文件索引，同步 §16；如引入新已知问题/技术债，同步 §11.3 / §12；
+3. **README.md 同步**：仅当改变面向用户的门面信息（特性清单、快速开始、文档索引）。
+
+### 17.3 文档格式契约
+
+- 头部引用块：**版本**（版本号 + 日期）、**范围**（触及的文件/模块）、**状态**（合并位置 + 测试状态）；
+- 正文顺序：目标与背景（为什么）→ 架构（是什么）→ **契约**（隐性规则显性化：数值/行为/修改契约）→ 维护指南（怎么改）；
+- 命名约定：设计 `<topic>.md`、计划 `<topic>-plan.md`、审计 `<topic>-audit(-report).md`、报告 `<topic>-report.md`、流水线阶段 `<stage>-stage.md`；
+- 语言：中文为主，术语保留英文原词。
+
+### 17.4 特殊域的额外契约
+
+| 域 | 额外要求 | 索引 |
+|----|----------|------|
+| 跟踪器 | Python/Rust 两侧同步 + 等价性对拍 + golden 再生成 | [rust-tracker-core](docs/rust-tracker-core.md) §3.3 |
+| 控件样式 | 只改 `SQUIRCLE_ASSETS` + 重跑生成器，禁手改 PNG | [squircle-capsule-widgets](docs/squircle-capsule-widgets.md) §3 |
+
+### 17.5 机器保障
+
+- PR 模板（`.github/PULL_REQUEST_TEMPLATE.md`）内置本清单，开 PR 即见；
+- CI 检查 `pr-docs-check`（`.github/workflows/pr-docs-check.yml`）：内容向 PR 未触碰 `docs/` / `PROJECT_BIBLE.md` / `README.md` 且未声明豁免（`[docs-skip]`）时，自动评论并将检查置为失败。
+
 ---
 
 > **本文档为 VisionBata 项目的权威技术白皮书。所有新开发者、AI Agent 和维护者应首先阅读本文档以理解项目全貌。**

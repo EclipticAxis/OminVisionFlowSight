@@ -227,6 +227,7 @@ python benchmark/benchmark_tracker_rust.py             # 跟踪器性能基准�
 
 请注意：
 
+- **内容向 PR 必须沉淀文档**：按 [文档沉淀规范](./PROJECT_BIBLE.md#17-文档沉淀规范pr-契约)（§17）将设计意图与契约写入 `docs/` 并同步白皮书——PR 模板与 CI 会检查（完整流程见 [CONTRIBUTING.md](./CONTRIBUTING.md)）；
 - 参与贡献前请确认你已阅读并同意 [许可证](#许可证) 条款；
 - 本项目因采用 **PolyForm Noncommercial License 1.0.0**，你的贡献同样遵循上述**非商业使用限制**——请勿将本软件或其衍生作品用于任何以盈利为目的的场景；
 - 为开发者提供的**自愿赞助、打赏或捐赠**不受此限制（详见上文许可证说明）；
