@@ -15,7 +15,7 @@
    改完两侧同步 + `pytest tests/test_tracker_rust_equivalence.py`，
    行为变更另需 `pytest tests/test_tracker_snapshot.py --update-golden`。
 
-4. **测试**：全套件 `pytest tests/` 必须全绿（当前 1277 项）；
+4. **测试**：全套件 `pytest tests/` 必须全绿（当前 1279 项）；
    守护类用例经 `tests/_runtime_checks.py` 在子进程检查 import 副作用，勿改回进程内断言。
 
 5. **环境**：Windows + Python 3.11（`venv/`）；
