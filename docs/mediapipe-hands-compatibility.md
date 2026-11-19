@@ -2,7 +2,7 @@
 
 > **版本**：1.0.0（2026-11-19）
 > **范围**：`requirements.txt`、`ai/hand_gesture_recognizer.py`、`tests/test_hand_gesture_recognizer.py`
-> **状态**：待合并；venv 已安装 mediapipe 0.10.14，2 项专项测试与全套件 1279 项均通过（2026-11-19）
+> **状态**：已合入 main（PR #3 → `d2d8349`，2026-11-19）；venv 已安装 mediapipe 0.10.14，2 项专项测试与全套件 1279 项均通过（2026-11-19）
 
 ---
 
