@@ -1,7 +1,7 @@
 # VisionBata（VisionDataPlatform）项目白皮书
 
-> **版本**：1.1.1  
-> **最后更新**：2026-07-10  
+> **版本**：1.2.0
+> **最后更新**：2026-11-19
 > **文档类型**：项目全量技术白皮书（PROJECT BIBLE）  
 > **目标读者**：新开发者、AI Agent、项目维护者  
 
@@ -91,7 +91,7 @@ VisionBata（内部代号 VisionDataPlatform，简称 VDP）是一个**桌面级
 | **重检测** | 卡尔曼预测 ROI 裁剪重检测 | ✅ 完整 | tracker + 回调 |
 | **姿态** | 17 点 COCO 人体骨架 + 绘制 | ✅ 完整 | YOLOv8-pose |
 | **手势** | 身体姿态手势（举手/摔倒/蹲下/双臂展开等） | ✅ 完整 | 纯几何 |
-| **手势** | 手部手指手势（OK/点赞/数字 1~5/握拳等） | ⚠️ 禁用 | MediaPipe（版本兼容） |
+| **手势** | 手部手指手势（OK/点赞/数字 1~5/握拳等） | ✅ 完整 | MediaPipe 0.10.14 |
 | **矩形** | Canny + 轮廓矩形检测 + 线性卡尔曼跟踪 | ✅ 完整 | OpenCV |
 | **头部属性** | 帽子/口罩/墨镜/眼睛开闭/嘴巴开闭 | ✅ 完整 | PINTO0309 CHC ONNX |
 | **去噪** | 双边滤波 / NL-Means 预处理 | ✅ 完整 | OpenCV |
@@ -125,7 +125,7 @@ VisionBata（内部代号 VisionDataPlatform，简称 VDP）是一个**桌面级
 | **数值计算** | numpy | ≥1.21.0 | 卡尔曼滤波、数组运算、几何计算 |
 | **图像处理** | opencv-python | ≥4.5.0 | Canny/轮廓/CLAHE、去噪、颜色转换、超分辨率 |
 | **摄像头采集** | av (PyAV) | ≥10.0.0 | DirectShow 摄像头采集 + H.264 录像 |
-| **手部手势** | mediapipe | ≥0.10.0 | 手部关键点（**当前版本兼容性问题，已禁用**） |
+| **手部手势** | mediapipe | ≥0.10.14,<0.10.15 | 手部关键点（旧式 Solutions API） |
 
 ### 4.2 技术选型理由
 
@@ -264,7 +264,7 @@ VisionBata（内部代号 VisionDataPlatform，简称 VDP）是一个**桌面级
 
 #### `start.bat` — Windows 启动脚本
 
-硬编码路径 `F:\VisionBata\venv\Scripts\python.exe main.py`。**注意**：若项目目录移动需同步修改。
+通过 `cd /d "%~dp0"` 切换到脚本所在目录，并调用 `"%~dp0venv\Scripts\python.exe" main.py`。项目目录移动后无需修改脚本；仅启动失败（非零退出码）时暂停以保留错误输出。
 
 ---
 
@@ -389,7 +389,7 @@ if frame_id % stride == 0:
     4. _attach_head_attributes (CHC 头部属性)
     5. _attach_gestures (身体姿态手势)
     6. _run_rectangle_detection (Canny + 轮廓)
-    7. _run_hand_gesture_detection (MediaPipe, 已禁用)
+    7. _run_hand_gesture_detection (MediaPipe, 可选)
     8. final_dedupe() 去重
     9. _HealthMonitor 健康检查 → 异常自动回退保守配置
 else:
@@ -517,7 +517,7 @@ detections (list[Detection])
 基于 MediaPipe Hands 21 个关键点分类：
 - `ok`、`thumbs_up`、`one`~`five`、`fist`、`open_palm`
 
-**当前状态：已禁用**（mediapipe 版本兼容性问题导致 `mp.solutions.hands` 无法导入）。
+**当前状态：可用**。`requirements.txt` 将 mediapipe 限定为 `>=0.10.14,<0.10.15`，保留代码使用的 `mp.solutions.hands` API；当前验证的 0.10.35 与 1.0.1 已移除该 API，升级前必须迁移至 Tasks API。兼容性契约与守护测试见 [MediaPipe Hands 兼容性约束](docs/mediapipe-hands-compatibility.md)。
 
 ---
 
@@ -845,7 +845,7 @@ MainWindow.closeEvent()
 ```
 F:\VisionBata\
 ├── main.py              # 入口（必须）
-├── start.bat            # 启动脚本（路径可改）
+├── start.bat            # 启动脚本（自动定位项目目录与 venv）
 ├── venv/                # 虚拟环境（必须）
 ├── models/              # 模型文件（必须至少含 yolov8n.pt）
 ├── ai/                  # 推理模块（必须）
@@ -881,15 +881,15 @@ F:\VisionBata\
 | 2026-11-17 | Squircle 连续曲率圆角 GUI（PR #1，[设计](docs/squircle-capsule-widgets.md)） | ✅ |
 | 2026-11-18 | omintrack Rust 跟踪内核（PR #2，[设计](docs/rust-tracker-core.md)） | ✅ |
 | 2026-11-19 | 守护测试修复（子进程隔离 + UTF-8，全套件 1277 通过） | ✅ |
+| 2026-11-19 | MediaPipe Hands 依赖兼容性修复（[设计](docs/mediapipe-hands-compatibility.md)） | ✅ |
+| 2026-11-19 | 应用版本与启动文档元数据校正（[维护契约](docs/runtime-maintenance.md)） | ✅ |
 
 ### 11.3 已知问题
 
 | 问题 | 严重程度 | 状态 |
 |------|----------|------|
-| MediaPipe Hands 版本兼容性导致手部手势不可用 | 中 | 已禁用，待修复 |
 | DirectML 某些 ONNX 模型可能 fallback CPU | 低 | 取决于 GPU 驱动 |
 | UHD 64x64 模型在随机噪声上假阳性较多 | 低 | 依赖 tracker 置信度过滤 |
-| `start.bat` 硬编码绝对路径 | 低 | 文档已知 |
 | Rust 扩展未构建时 rust 跟踪后端不可用 | 低 | 默认 python 后端不受影响；构建见 [omintrack 设计文档](docs/rust-tracker-core.md) |
 
 ---
@@ -940,7 +940,6 @@ F:\VisionBata\
 | 风险 | 概率 | 影响 | 缓解措施 |
 |------|------|------|----------|
 | **InferWorker 单点故障** | 中 | 推理线程崩溃 → 全部摄像头无检测结果 | 当前有 `_HealthMonitor` 部分缓解，但未做线程重启 |
-| **MediaPipe 兼容性** | 中 | 手部手势功能不可用 | 考虑替换为 ONNX 手势模型 |
 | **PyAV DirectShow 稳定性** | 低 | 特定摄像头驱动可能导致采集中断 | `camera/enumerator.py` 三级枚举 + 拉流验证 |
 | **ONNX 模型兼容性** | 中 | 非标准 ONNX 模型（如 PINTO0309 后处理）可能在新版 ORT 上行为变化 | 锁定 onnxruntime-directml 版本 |
 | **无 GPU 时的性能** | 中 | CPU 下多路全功能推理可能低于实时 | 跳帧机制、UHD 64x64 轻量模型、功能开关 |
@@ -960,10 +959,9 @@ F:\VisionBata\
 
 ### 14.1 短期（1-2 周）
 
-1. **修复 MediaPipe 手部手势**：升级 mediapipe 版本或替换为 ONNX 手势模型
-2. **补充测试**：为 DetectionTracker、UKF 族、RectangleDetector 补充单元测试
-3. **代码清理**：消除重复的 `_debug_report()`、统一 Detection dict/object 使用
-4. **引入 FilterType 枚举**：消除魔法字符串
+1. **补充测试**：为 DetectionTracker、UKF 族、RectangleDetector 补充单元测试
+2. **代码清理**：消除重复的 `_debug_report()`、统一 Detection dict/object 使用
+3. **引入 FilterType 枚举**：消除魔法字符串
 
 ### 14.2 中期（1-2 月）
 

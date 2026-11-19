@@ -53,15 +53,15 @@
   - UHD 64x64 轻量人体检测（CPU 优先）
   - 矩形物体检测（Canny + 轮廓 + 线性卡尔曼跟踪）
 - 🧭 **多目标跟踪**：UKF / MCUKF / Manifold UKF 滤波族 + AUTO 自适应切换，OBB polygon 关联跟踪；跳帧（`infer_stride`）卡尔曼预测填充中间帧；目标消失后基于预测的 ROI 重检测自动找回。
-- 🦴 **姿态与手势**：17 点 COCO 人体骨架绘制；基于几何规则的身体姿态手势识别（举手 / 摔倒 / 蹲下 / 双臂展开等）。
+- 🦴 **姿态与手势**：17 点 COCO 人体骨架绘制；基于几何规则的身体姿态手势识别（举手 / 摔倒 / 蹲下 / 双臂展开等），以及基于 MediaPipe Hands 的手部手指手势识别（OK / 点赞 / 数字 1~5 / 握拳等）。
 - 🧢 **头部属性识别**：帽子 / 口罩 / 墨镜 / 眼睛开闭 / 嘴巴开闭五维属性分类。
 - 🌫️ **图像增强**：双边滤波 / NL-Means 去噪预处理，可选 ESPCN x4 小目标超分辨率增强。
 - 🔌 **可扩展流水线（VisionCore）**：模块化 Pipeline / Stage 体系，内置去噪、检测、跟踪、目标状态、重检、事件等阶段，支持插件注册（Plugin Registry）与影子（Shadow）旁路验证，可在不影响主链路的情况下逐步重构。
 - 📡 **事件总线与协议发布**：Qt 信号槽解耦的 EventBus 贯通采集 / 推理 / GUI / 录制线程；支持 JSON / CBOR 序列化，提供 UDP、Console 等适配器将目标状态对外发布。
 - 🖥️ **专业暗色 GUI**：Fusion 风格 + 动画系统的深色主题界面，支持多相机网格布局、启动画面、设置对话框与大量功能开关。
-- 🧪 **完善的测试**：`tests/` 下 1270+ 个 pytest 用例，覆盖流水线各阶段、序列化、事件总线、跟踪器行为快照与 Python/Rust 等价性。
+- 🧪 **完善的测试**：`tests/` 下 1279 个 pytest 用例，覆盖流水线各阶段、序列化、事件总线、跟踪器行为快照与 Python/Rust 等价性。
 
-> 提示：MediaPipe 手部手指手势（OK / 点赞 / 数字 1~5 / 握拳等）在当前版本因版本兼容性问题默认关闭，身体姿态手势不受影响。
+> 提示：手部手势代码使用 MediaPipe 旧式 Solutions API，依赖版本限定为 `mediapipe>=0.10.14,<0.10.15`；当前验证的 0.10.35 与 1.0.1 已移除该 API，升级前需先迁移至 Tasks API。
 
 ## 技术栈
 
@@ -99,13 +99,10 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Windows 用户也可运行随附的 `start.bat`（请在运行前按本机路径调整其中的 venv 位置）：
+Windows 用户也可直接运行随附的 `start.bat`。脚本通过 `%~dp0` 定位自身目录及仓内 `venv`，移动项目目录后无需修改路径：
 
 ```bat
-@echo off
-cd /d "%~dp0"
-"%~dp0venv\Scripts\python.exe" main.py
-pause
+start.bat
 ```
 
 首次启动后，可通过 GUI 的**设置对话框**开闭各项功能（人体检测、骨骼、手势、矩形检测、去噪、滤波器类型、ROI 重检、头部属性等）。
@@ -184,14 +181,15 @@ OminVisionFlowSight/
 ## 测试
 
 ```bash
-pytest tests/                                          # 全部用例（1270+）
+pytest tests/                                          # 全部用例（1279 项）
+pytest tests/test_hand_gesture_recognizer.py           # MediaPipe Hands API 与初始化兼容性（2 例）
 pytest tests/test_tracker_rust_equivalence.py          # Python/Rust 跟踪器逐帧等价性（18 例）
 pytest tests/test_tracker_snapshot.py                  # 跟踪器行为 golden 快照（13 场景）
 pytest tests/test_tracker_snapshot.py --update-golden  # 行为变更后再生成快照
 python benchmark/benchmark_tracker_rust.py             # 跟踪器性能基准（Python vs Rust）
 ```
 
-> 说明：全部跟踪器相关用例通过；另有 17 个架构守护用例在整跑时受套件级 import 顺序与 Windows 中文区域编码影响而失败（单独运行均通过），属既有测试隔离问题，正在治理。
+> 说明：全套件 1279 项已通过（2026-11-19）。架构守护用例通过 `tests/_runtime_checks.py` 在子进程中检查 import 副作用，并使用 UTF-8 避免 Windows 中文区域编码影响。
 
 ## 文档
 
@@ -199,6 +197,8 @@ python benchmark/benchmark_tracker_rust.py             # 跟踪器性能基准�
 
 - **架构与规划**：[战略路线图](./docs/strategic-roadmap.md)、[VisionCore 流水线基础](./docs/pipeline-foundation.md)、[SentinelTrack 2.0 架构蓝图](./docs/sentineltrack-2.0-architecture-blueprint.md)
 - **跟踪与滤波**：[MCUKF / Manifold UKF 方案](./docs/mcukf-manifold-ukf-plan.md)、[AUTO 自适应滤波](./docs/auto-filter-adaptive-plan.md)、[跟踪阶段](./docs/tracker-stage.md)、[Rust 内核设计契约](./docs/rust-tracker-core.md)、[Rust 构建说明](./rust/omintrack/README.md)
+- **识别运行时**：[MediaPipe Hands 兼容性约束](./docs/mediapipe-hands-compatibility.md)
+- **运行与维护**：[运行时元数据与启动脚本维护](./docs/runtime-maintenance.md)
 - **GUI 与主题**：[squircle 连续曲率圆角](./docs/squircle-capsule-widgets.md)
 - **性能**：[性能退化分析](./docs/performance-degradation-analysis.md)、[CBOR 基准](./docs/cbor-benchmark.md)
 - **插件与协议**：[插件注册表](./docs/plugin-registry.md)、[状态发布](./docs/state-publisher.md)、[UDP 适配器](./docs/udp-adapter.md)
