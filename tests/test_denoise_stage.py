@@ -25,6 +25,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests._runtime_checks import assert_import_clean
+
 import numpy as np
 
 from visioncore.core.frame import Frame
@@ -352,8 +354,7 @@ def test_no_gui_ai_in_source():
 
 def test_no_cv2_loaded_at_runtime():
     """Importing denoise_stage does not load cv2 as side effect."""
-    import visioncore.pipeline.stages.denoise_stage  # noqa: F401
-    assert "cv2" not in sys.modules, "cv2 loaded as side effect"
+    assert_import_clean("visioncore.pipeline.stages.denoise_stage", ["cv2"])
 
 
 # ======================================================================

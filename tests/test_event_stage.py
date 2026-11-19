@@ -22,6 +22,8 @@ import ast
 import traceback
 from typing import Any
 
+
+from tests._runtime_checks import assert_import_clean
 from visioncore.core.event import Event
 from visioncore.pipeline import Pipeline, PipelineContext, PipelineStage
 from visioncore.pipeline.stages import (
@@ -461,7 +463,7 @@ def test_no_network_udp_protocol_in_source():
     visioncore.protocol. The stage publishes to an in-process bus only.
     """
     import visioncore.pipeline.stages.event_stage as mod
-    src = open(mod.__file__).read()
+    src = open(mod.__file__, encoding="utf-8").read()
     tree = ast.parse(src)
     banned = ("socket", "udp", "protocol", "http", "requests", "urllib",
               "aiohttp", "zmq")
@@ -482,14 +484,7 @@ def test_no_network_udp_protocol_in_source():
 
 def test_no_protocol_loaded_at_runtime():
     """Importing the stages package does not load visioncore.protocol."""
-    import sys
-    import visioncore.pipeline.stages  # noqa: F401
-    assert "visioncore.protocol" not in sys.modules, (
-        "visioncore.protocol loaded as side effect of stages import"
-    )
-    assert "socket" not in sys.modules, (
-        "socket loaded as side effect of stages import"
-    )
+    assert_import_clean("visioncore.pipeline.stages", ["visioncore.protocol", "socket"])
 
 
 def test_event_bus_interface_is_minimal():

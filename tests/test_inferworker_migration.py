@@ -23,6 +23,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests._runtime_checks import assert_import_clean
+
 from visioncore.pipeline import Pipeline, PipelineContext
 from visioncore.pipeline.adapters import (
     InferWorkerDetectorAdapter,
@@ -427,8 +429,7 @@ def test_no_network_model_gui_imports_in_source():
 
 def test_no_torch_loaded_at_runtime():
     """Importing migration module does not load torch."""
-    import visioncore.pipeline.migration  # noqa: F401
-    assert "torch" not in sys.modules, "torch loaded as side effect"
+    assert_import_clean("visioncore.pipeline.migration", ["torch"])
 
 
 # ======================================================================

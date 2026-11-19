@@ -24,6 +24,8 @@ import ast
 import traceback
 from typing import Any
 
+
+from tests._runtime_checks import assert_import_clean
 from visioncore.core.detection import BBox, Detection
 from visioncore.core.target import Target
 from visioncore.core.target import TargetState as TargetLifecycle
@@ -589,7 +591,7 @@ def test_no_gui_inferworker_in_source():
     AST-parse and assert no import of gui, PyQt, or ai.inference.
     """
     import visioncore.pipeline.stages.target_stage as mod
-    src = open(mod.__file__).read()
+    src = open(mod.__file__, encoding="utf-8").read()
     tree = ast.parse(src)
     banned = ("gui", "PyQt5", "PyQt6", "inference", "inferworker")
     violations: list[str] = []
@@ -609,13 +611,7 @@ def test_no_gui_inferworker_in_source():
 
 def test_no_gui_inferworker_loaded_at_runtime():
     """Importing the stages package does not load GUI/InferWorker."""
-    import sys
-    import visioncore.pipeline.stages  # noqa: F401
-    banned = ["PyQt6", "PyQt5"]
-    loaded = [b for b in banned if b in sys.modules]
-    assert not loaded, f"GUI loaded as side effect: {loaded}"
-    # ai.inference should not be loaded either.
-    assert "ai.inference" not in sys.modules, "ai.inference loaded as side effect"
+    assert_import_clean("visioncore.pipeline.stages", ["PyQt6", "PyQt5", "ai.inference"])
 
 
 def test_target_manager_interface_has_four_methods():

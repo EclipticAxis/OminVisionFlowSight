@@ -23,6 +23,8 @@ import ast
 import traceback
 from typing import Any
 
+
+from tests._runtime_checks import assert_import_clean
 from visioncore.core.detection import BBox, Detection
 from visioncore.core.track import Track
 from visioncore.pipeline import Pipeline, PipelineContext, PipelineStage
@@ -587,7 +589,7 @@ def test_no_bytrack_botsort_ostrack_in_source():
     on a concrete tracking library.
     """
     import visioncore.pipeline.stages.tracker_stage as mod
-    src = open(mod.__file__).read()
+    src = open(mod.__file__, encoding="utf-8").read()
     tree = ast.parse(src)
     banned = ("bytrack", "byte_track", "bytetrack", "botsort", "bot_sort",
               "ostrack", "os_track", "ultralytics", "onnxruntime", "cv2",
@@ -611,12 +613,9 @@ def test_no_bytrack_botsort_ostrack_in_source():
 
 def test_no_banned_backends_loaded_at_runtime():
     """Importing the stages package does not load any banned backend."""
-    import sys
-    import visioncore.pipeline.stages  # noqa: F401
-    banned = ["ultralytics", "onnxruntime", "cv2", "filterpy", "scipy"]
-    loaded = [b for b in banned if b in sys.modules]
-    assert not loaded, (
-        f"banned backend(s) loaded as side effect: {loaded}"
+    assert_import_clean(
+        "visioncore.pipeline.stages",
+        ["ultralytics", "onnxruntime", "cv2", "filterpy", "scipy"],
     )
 
 

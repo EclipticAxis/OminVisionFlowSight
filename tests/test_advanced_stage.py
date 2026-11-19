@@ -29,6 +29,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests._runtime_checks import assert_import_clean
+
 from visioncore.pipeline import PipelineContext, PipelineStage
 from visioncore.pipeline.stages.advanced import (
     AdvancedStage,
@@ -602,7 +604,7 @@ def test_advanced_stage_repr_in_pipeline_diagnostics():
 def test_no_gui_inferworker_in_source():
     """The advanced modules contain no GUI/InferWorker refs (AST check)."""
     import visioncore.pipeline.stages.advanced.advanced_stage as mod
-    src = open(mod.__file__).read()
+    src = open(mod.__file__, encoding="utf-8").read()
     tree = ast.parse(src)
     banned = ("gui", "PyQt5", "PyQt6", "inference", "inferworker")
     violations: list[str] = []
@@ -622,12 +624,9 @@ def test_no_gui_inferworker_in_source():
 
 def test_no_gui_inferworker_loaded_at_runtime():
     """Importing the advanced package does not load GUI/InferWorker."""
-    import sys
-    import visioncore.pipeline.stages.advanced  # noqa: F401
-    banned = ["PyQt6", "PyQt5"]
-    loaded = [b for b in banned if b in sys.modules]
-    assert not loaded, f"GUI loaded as side effect: {loaded}"
-    assert "ai.inference" not in sys.modules, "ai.inference loaded as side effect"
+    assert_import_clean(
+        "visioncore.pipeline.stages.advanced", ["PyQt6", "PyQt5", "ai.inference"]
+    )
 
 
 # ======================================================================

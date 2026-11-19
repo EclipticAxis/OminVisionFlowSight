@@ -25,6 +25,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests._runtime_checks import assert_import_clean
+
 import numpy as np
 
 from visioncore.core.detection import BBox, Detection
@@ -385,8 +387,7 @@ def test_no_gui_ai_in_source():
 
 def test_no_torch_loaded_at_runtime():
     """Importing redetect_stage does not load torch as side effect."""
-    import visioncore.pipeline.stages.redetect_stage  # noqa: F401
-    assert "torch" not in sys.modules, "torch loaded as side effect"
+    assert_import_clean("visioncore.pipeline.stages.redetect_stage", ["torch"])
 
 
 # ======================================================================

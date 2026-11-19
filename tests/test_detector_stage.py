@@ -21,6 +21,8 @@ import ast
 import traceback
 from typing import Any
 
+
+from tests._runtime_checks import assert_import_clean
 import numpy as np
 
 from visioncore.core.detection import BBox, Detection
@@ -552,7 +554,7 @@ def test_no_yolo_rt_detr_groundingdino_sam_in_source():
     family.
     """
     import visioncore.pipeline.stages.detector_stage as mod
-    src = open(mod.__file__).read()
+    src = open(mod.__file__, encoding="utf-8").read()
     tree = ast.parse(src)
     banned = ("yolo", "rt_detr", "rtdetr", "rt-detr", "groundingdino",
               "grounding_dino", "grounding-dino", "sam", "ultralytics",
@@ -576,15 +578,7 @@ def test_no_yolo_rt_detr_groundingdino_sam_in_source():
 
 def test_no_yolo_rt_detr_groundingdino_sam_loaded_at_runtime():
     """Importing the stages package does not load any banned backend."""
-    import sys
-    # Ensure a clean-ish view: the banned names must not be present after
-    # importing the stages package.
-    import visioncore.pipeline.stages  # noqa: F401
-    banned = ["ultralytics", "onnxruntime", "cv2"]
-    loaded = [b for b in banned if b in sys.modules]
-    assert not loaded, (
-        f"banned backend(s) loaded as side effect: {loaded}"
-    )
+    assert_import_clean("visioncore.pipeline.stages", ["ultralytics", "onnxruntime", "cv2"])
 
 
 def test_detector_interface_is_model_agnostic():
