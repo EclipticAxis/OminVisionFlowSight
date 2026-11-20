@@ -1,5 +1,10 @@
 # InferWorker Final Audit (Milestone D9.5)
 
+> **现状校正（2026-11-20）**：本文是 D9.5 历史实验审计，不代表生产已切换。
+> `ai/inference_controller.py` 至今未接入生产，且缺少真实 `_run_inference` / tracker 接缝，不能直接替代
+> `ai/inference.py`。当前生产 InferWorker 的帧级防火带、Legacy ↔ Pipeline 对拍和 runtime 生命周期契约以
+> [inferworker-pipeline-parity](inferworker-pipeline-parity.md) 0.4.0 为准；默认仍为 Legacy。
+
 > **审计日期**：2026-08-04
 > **审计范围**：`ai/inference_controller.py`（405 行）+ `ai/inference.py`（2,169 行，原始参考）
 > **风险等级**：**PASS**

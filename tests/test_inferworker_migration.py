@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tests._runtime_checks import assert_import_clean
 
+from visioncore.core.detection import Detection as _CoreDetection
 from visioncore.pipeline import Pipeline, PipelineContext
 from visioncore.pipeline.adapters import (
     InferWorkerDetectorAdapter,
@@ -49,11 +50,13 @@ class _MockDetectorBackend:
     """Simulates a detector backend (YOLO etc.) for adapter tests."""
 
     def __init__(self, detections: list[dict] | None = None) -> None:
+        # Production schema: x1/y1/x2/y2 + confidence/class_id/label
+        # (same as ai.detection.Detection.to_dict()); never a bbox key.
         self._detections = detections or [
-            {"bbox": (0.1, 0.2, 0.3, 0.4), "confidence": 0.9,
-             "class_id": 0, "label": "person"},
-            {"bbox": (0.5, 0.6, 0.7, 0.8), "confidence": 0.8,
-             "class_id": 0, "label": "person"},
+            {"x1": 0.1, "y1": 0.2, "x2": 0.3, "y2": 0.4,
+             "confidence": 0.9, "class_id": 0, "label": "person"},
+            {"x1": 0.5, "y1": 0.6, "x2": 0.7, "y2": 0.8,
+             "confidence": 0.8, "class_id": 0, "label": "person"},
         ]
         self._model = True  # health_check: model is not None
         self.call_count = 0
@@ -69,17 +72,21 @@ class _MockTrackerBackend:
     def __init__(self) -> None:
         self.call_count = 0
         self._last_update_args = None
+        self._last_redetect_callback: Any = "UNSET"
+        self.appearance_calls = 0
 
-    def update(self, detections: list[dict], frame: Any = None) -> list[dict]:
+    def update(self, detections: list[dict], frame: Any = None,
+               redetect_callback: Any = None) -> list[dict]:
         self.call_count += 1
         self._last_update_args = (detections, frame)
+        self._last_redetect_callback = redetect_callback
         # Return tracked detections with track_ids assigned
         return [
             {**d, "track_id": i + 1} for i, d in enumerate(detections)
         ]
 
     def update_appearance(self, frame: Any) -> None:
-        pass
+        self.appearance_calls += 1
 
 
 class _MockTargetManager:
@@ -127,8 +134,9 @@ class _MockWorker:
 def _raise_process(frame, slot_id, frame_id, submitted_ts):
     """Legacy process callable that records calls."""
     _raise_process.calls.append((frame, slot_id, frame_id, submitted_ts))
-    return [{"bbox": (0.1, 0.2, 0.3, 0.4), "confidence": 0.9,
-             "class_id": 0, "label": "person", "track_id": 1}]
+    return [{"x1": 0.1, "y1": 0.2, "x2": 0.3, "y2": 0.4,
+             "confidence": 0.9, "class_id": 0, "label": "person",
+             "track_id": 1}]
 
 
 _raise_process.calls = []
@@ -304,20 +312,17 @@ def test_dual_mode_same_backends():
 
 
 def test_dual_mode_returns_same_structure():
-    """Both modes return list[dict] with the same keys."""
-    detections = [
-        {"bbox": (0.1, 0.2, 0.3, 0.4), "confidence": 0.9,
-         "class_id": 0, "label": "person"},
-    ]
-
+    """Both modes return list[dict] with the production schema keys."""
     # Legacy mode
     _raise_process.calls = []
     mp = MigrationPipeline(legacy_process=_raise_process)
     legacy_result = mp.run_frame("frame", slot_id=0, frame_id=1, submitted_ts=0.0)
     assert isinstance(legacy_result, list)
     assert all(isinstance(d, dict) for d in legacy_result)
-    assert "bbox" in legacy_result[0]
-    assert "confidence" in legacy_result[0]
+    # Production schema: x1/y1/x2/y2 corners, never a bbox key
+    for key in ("x1", "y1", "x2", "y2", "confidence", "class_id", "label"):
+        assert key in legacy_result[0]
+    assert "bbox" not in legacy_result[0]
 
 
 # ======================================================================
@@ -430,6 +435,139 @@ def test_no_network_model_gui_imports_in_source():
 def test_no_torch_loaded_at_runtime():
     """Importing migration module does not load torch."""
     assert_import_clean("visioncore.pipeline.migration", ["torch"])
+
+
+# ======================================================================
+# 8. Step-4 parity: lossless dict<->core round-trip + redetect passthrough
+# ======================================================================
+
+def test_dict_core_roundtrip_preserves_extras_exactly():
+    """Extras (keypoints/polygon/track_id/track_state/gesture/head) survive."""
+    from visioncore.pipeline.adapters import (
+        _core_detection_to_dict,
+        _dict_to_core_detection,
+    )
+
+    src = {
+        "x1": 0.10, "y1": 0.10, "x2": 0.50, "y2": 0.90,
+        "confidence": 0.92, "label": "person", "class_id": 0,
+        "track_id": 7, "track_state": "normal",
+        "keypoints": [{"x": 0.3, "y": 0.2, "conf": 0.9}],
+        "polygon": [[0.6, 0.1], [0.9, 0.15], [0.88, 0.4], [0.58, 0.35]],
+        "gesture": "raising_hand",
+        "head_attrs": {"hat": True},
+    }
+    core = _dict_to_core_detection(src)
+    out = _core_detection_to_dict(core)
+
+    # Corners reproduced bit-exactly (float round-trip through centre/size
+    # is not exact; the adapter snapshot must restore the original values).
+    assert out == src
+    # Production schema on output: never a bbox key.
+    assert "bbox" not in out
+    # Extras are deep copies: mutating the output must not touch the source.
+    out["keypoints"][0]["x"] = 9.9
+    assert src["keypoints"][0]["x"] == 0.3
+
+
+def test_dict_core_roundtrip_core_bbox_change_maps_back():
+    """A modified core bbox maps to the output; extras are kept."""
+    from visioncore.core.detection import BBox
+    from visioncore.pipeline.adapters import (
+        _AdaptedDetection,
+        _core_detection_to_dict,
+        _dict_to_core_detection,
+    )
+
+    core = _dict_to_core_detection({
+        "x1": 0.10, "y1": 0.10, "x2": 0.50, "y2": 0.90,
+        "confidence": 0.92, "label": "person", "class_id": 0,
+        "track_id": 7,
+    })
+    moved = _AdaptedDetection(
+        bbox=BBox(x=0.4, y=0.5, w=0.2, h=0.4),
+        score=core.score, class_id=core.class_id,
+        class_name=core.class_name, extras=core.extras,
+    )
+    out = _core_detection_to_dict(moved)
+    assert abs(out["x1"] - 0.3) < 1e-9
+    assert abs(out["y1"] - 0.3) < 1e-9
+    assert abs(out["x2"] - 0.5) < 1e-9
+    assert abs(out["y2"] - 0.7) < 1e-9
+    assert out["track_id"] == 7  # extras kept alongside changed basics
+    assert "bbox" not in out
+
+
+def test_dict_to_core_accepts_legacy_bbox_key_but_never_emits_it():
+    """Old bbox-tuple input stays accepted; output is production schema."""
+    from visioncore.pipeline.adapters import (
+        _core_detection_to_dict,
+        _dict_to_core_detection,
+    )
+
+    core = _dict_to_core_detection({
+        "bbox": (0.1, 0.2, 0.3, 0.4),
+        "confidence": 0.5, "class_id": 2, "label": "car",
+    })
+    out = _core_detection_to_dict(core)
+    assert out["x1"] == 0.1 and out["y2"] == 0.4
+    assert "bbox" not in out
+
+
+def test_adapted_detection_value_semantics_match_core_detection():
+    """Extras do not participate in eq/hash; base 4-field contract intact."""
+    from visioncore.core.detection import BBox
+    from visioncore.pipeline.adapters import _AdaptedDetection
+
+    plain_core = _CoreDetection(
+        bbox=BBox(0.5, 0.5, 0.2, 0.4), score=0.9, class_id=0,
+        class_name="person",
+    )
+    adapted = _AdaptedDetection(
+        bbox=BBox(0.5, 0.5, 0.2, 0.4), score=0.9, class_id=0,
+        class_name="person", extras={"track_id": 3},
+    )
+    assert adapted == plain_core
+    assert plain_core == adapted
+    assert hash(adapted) == hash(plain_core)
+    assert adapted != _AdaptedDetection(
+        bbox=BBox(0.4, 0.5, 0.2, 0.4), score=0.9, class_id=0,
+        class_name="person",
+    )
+    # Base class still has exactly the four core fields.
+    import dataclasses
+    assert {f.name for f in dataclasses.fields(_CoreDetection)} == {
+        "bbox", "score", "class_id", "class_name",
+    }
+
+
+def test_tracker_adapter_forwards_redetect_callback_when_set():
+    """Enabled path passes the callback; disabled path is frame-only."""
+    from visioncore.core.detection import BBox
+    from visioncore.core.detection import Detection as CoreDetection
+
+    trk = _MockTrackerBackend()
+    worker = _MockWorker(tracker=trk)
+    adapter = InferWorkerTrackerAdapter(worker, slot_id=0)
+    adapter.set_frame_image("fake_frame")
+    dets = [
+        CoreDetection(bbox=BBox(x=0.2, y=0.3, w=0.2, h=0.2),
+                      score=0.9, class_id=0, class_name="person"),
+    ]
+
+    # Disabled: tracker.update receives frame only (callback stays None).
+    adapter.update(dets)
+    assert trk._last_redetect_callback is None
+    assert trk._last_update_args[1] == "fake_frame"
+
+    # Enabled: the very same callback object is forwarded.
+    def _cb(predicted_box, original_confidence):
+        return None
+
+    adapter.set_redetect_callback(_cb)
+    adapter.update(dets)
+    assert trk._last_redetect_callback is _cb
+    assert trk._last_update_args[1] == "fake_frame"
 
 
 # ======================================================================

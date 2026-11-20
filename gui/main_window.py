@@ -169,6 +169,8 @@ class MainWindow(QMainWindow):
             self._ai_head_classifier_stride,
         )
         self._infer_worker.model_ready.connect(self._on_infer_model_ready)
+        self._infer_worker.error_occurred.connect(self._on_infer_slot_error)
+        self._infer_worker.processing_recovered.connect(self._on_infer_slot_recovered)
         self._infer_worker.set_rectangle_sensitivity(self._ai_rectangle_sensitivity)
         self._infer_worker.set_rectangle_max_count(self._ai_rectangle_max_count)
         self._infer_worker.set_rectangle_target_color(self._ai_rectangle_target_rgb)
@@ -1271,6 +1273,20 @@ class MainWindow(QMainWindow):
         self._pending_ai_model_path = None
         self._refresh_dashboard(message)
 
+    def _on_infer_slot_error(self, slot_id: int, message: str) -> None:
+        """采集位 AI 处理异常（InferWorker 已按 1/30 节流）：dashboard 提示对应采集位异常。
+
+        只更新状态栏文案，不影响摄像头采集与其他槽位；无需自动重启。
+        """
+        if not 0 <= slot_id < self._MAX_SLOTS:
+            return
+        self._refresh_dashboard(message)
+
+    def _on_infer_slot_recovered(self, slot_id: int) -> None:
+        """采集位 AI 处理从连续失败中恢复：dashboard 提示对应采集位已恢复。"""
+        if not 0 <= slot_id < self._MAX_SLOTS:
+            return
+        self._refresh_dashboard(f"采集位 {slot_id + 1}：AI 已恢复")
 
     def _on_frame_for_recording(self, slot_id: int, frame: object) -> None:
         if self._is_recording:
