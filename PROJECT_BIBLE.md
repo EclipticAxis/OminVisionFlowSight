@@ -518,7 +518,7 @@ detections (list[Detection])
 - `ok`、`thumbs_up`、`one`~`five`、`fist`、`open_palm`
 
 **当前状态：可用**。`requirements.txt` 将 mediapipe 限定为 `>=0.10.14,<0.10.15`，保留代码使用的 `mp.solutions.hands` API；当前验证的 0.10.35 与 1.0.1 已移除该 API，升级前必须迁移至 Tasks API。兼容性契约与守护测试见 [MediaPipe Hands 兼容性约束](docs/mediapipe-hands-compatibility.md)。
-已知问题：非连续 ROI 切片会触发 MediaPipe c_contiguous 错误并被误恢复 writeable，修复见该文档 1.1.0（2026-11-20，待合并）。
+已知问题：非连续 ROI 切片会触发 MediaPipe c_contiguous 错误并被误恢复 writeable，修复见该文档 1.1.0（已随 PR #4 合入 main → `b4286d3`，2026-11-20）。
 
 ---
 
@@ -884,12 +884,12 @@ F:\VisionBata\
 | 2026-11-19 | 守护测试修复（子进程隔离 + UTF-8，全套件 1277 通过） | ✅ |
 | 2026-11-19 | MediaPipe Hands 依赖兼容性修复（[设计](docs/mediapipe-hands-compatibility.md)） | ✅ |
 | 2026-11-19 | 应用版本与启动文档元数据校正（[维护契约](docs/runtime-maintenance.md)） | ✅ |
-| 2026-11-20 | MediaPipe Hands 数组布局与 writeable 生命周期修复（[设计](docs/mediapipe-hands-compatibility.md) 1.1.0，8 项专项测试通过） | ⏳ 待合并 |
-| 2026-11-20 | InferWorker 单槽位单帧异常防火带（[设计](docs/inferworker-resilience.md)，本地 6 项新增 + 38 项关联专项测试通过） | ⏳ 待合并 |
-| 2026-11-20 | InferWorker Legacy 行为基线测试（[设计](docs/inferworker-pipeline-parity.md) 0.1.0，Legacy 基线 8 项通过） | ⏳ 待合并 |
-| 2026-11-20 | InferWorker 核心 Pipeline 接缝对齐（[设计](docs/inferworker-pipeline-parity.md) 0.2.0：生产 schema 统一、扩展字段无损往返、redetect 单点回调工厂、TargetManager 按帧单写；8 scenario × Legacy/Pipeline 双模式对拍 + run 级单写证明转绿，专项 149 项通过） | ⏳ 待合并 |
-| 2026-11-20 | InferWorker 共享后处理抽取 + run 级双槽位 slot 信号契约（[设计](docs/inferworker-pipeline-parity.md) 0.3.0：Legacy/Pipeline 后处理链合并为单一 `_postprocess_slot_detections`，行为与文案差异契约化；`detection_ready` 首参数 slot_id 双模式 run 级锁定；对拍专项 70 项、含 Pipeline/core 扩展命令 157 项通过） | ⏳ 待合并 |
-| 2026-11-20 | InferWorker Pipeline runtime 复用与生命周期收口（[设计](docs/inferworker-pipeline-parity.md) 0.4.0：每 slot 懒创建并复用已 initialize 的 `_SlotPipelineRuntime`，Legacy 零 runtime；redetect 回调逐帧重设、异常 runtime 淘汰重建、运行中 unregister 走 retirement 由 run 循环清理、stop 批量至多一次 shutdown；新增 11 项生命周期测试，五文件专项 137 项、含 Pipeline/core 扩展命令 168 项、全套件 1336 项通过） | ⏳ 待合并 |
+| 2026-11-20 | MediaPipe Hands 数组布局与 writeable 生命周期修复（[设计](docs/mediapipe-hands-compatibility.md) 1.1.0，8 项专项测试通过） | ✅ PR #4 → `b4286d3` |
+| 2026-11-20 | InferWorker 单槽位单帧异常防火带（[设计](docs/inferworker-resilience.md)，本地 6 项新增 + 38 项关联专项测试通过） | ✅ PR #4 → `b4286d3` |
+| 2026-11-20 | InferWorker Legacy 行为基线测试（[设计](docs/inferworker-pipeline-parity.md) 0.1.0，Legacy 基线 8 项通过） | ✅ PR #4 → `b4286d3` |
+| 2026-11-20 | InferWorker 核心 Pipeline 接缝对齐（[设计](docs/inferworker-pipeline-parity.md) 0.2.0：生产 schema 统一、扩展字段无损往返、redetect 单点回调工厂、TargetManager 按帧单写；8 scenario × Legacy/Pipeline 双模式对拍 + run 级单写证明转绿，专项 149 项通过） | ✅ PR #4 → `b4286d3` |
+| 2026-11-20 | InferWorker 共享后处理抽取 + run 级双槽位 slot 信号契约（[设计](docs/inferworker-pipeline-parity.md) 0.3.0：Legacy/Pipeline 后处理链合并为单一 `_postprocess_slot_detections`，行为与文案差异契约化；`detection_ready` 首参数 slot_id 双模式 run 级锁定；对拍专项 70 项、含 Pipeline/core 扩展命令 157 项通过） | ✅ PR #4 → `b4286d3` |
+| 2026-11-20 | InferWorker Pipeline runtime 复用与生命周期收口（[设计](docs/inferworker-pipeline-parity.md) 0.4.0：每 slot 懒创建并复用已 initialize 的 `_SlotPipelineRuntime`，Legacy 零 runtime；redetect 回调逐帧重设、异常 runtime 淘汰重建、运行中 unregister 走 retirement 由 run 循环清理、stop 批量至多一次 shutdown；新增 11 项生命周期测试，五文件专项 137 项、含 Pipeline/core 扩展命令 168 项、全套件 1336 项通过） | ✅ PR #4 → `b4286d3` |
 
 ### 11.3 已知问题
 
@@ -898,7 +898,7 @@ F:\VisionBata\
 | DirectML 某些 ONNX 模型可能 fallback CPU | 低 | 取决于 GPU 驱动 |
 | UHD 64x64 模型在随机噪声上假阳性较多 | 低 | 依赖 tracker 置信度过滤 |
 | Rust 扩展未构建时 rust 跟踪后端不可用 | 低 | 默认 python 后端不受影响；构建见 [omintrack 设计文档](docs/rust-tracker-core.md) |
-| MediaPipe Hands 对非连续 ROI 切片抛 c_contiguous 错误且误恢复 writeable | 中 | 修复已本地实现待合并（[设计](docs/mediapipe-hands-compatibility.md) 1.1.0，2026-11-20） |
+| MediaPipe Hands 对非连续 ROI 切片抛 c_contiguous 错误且误恢复 writeable | 中 | 已修复并合入 main（PR #4 → `b4286d3`，[设计](docs/mediapipe-hands-compatibility.md) 1.1.0） |
 
 ---
 
@@ -947,7 +947,7 @@ F:\VisionBata\
 
 | 风险 | 概率 | 影响 | 缓解措施 |
 |------|------|------|----------|
-| **InferWorker 单点故障** | 中 | 推理线程崩溃 → 全部摄像头无检测结果 | 工作区已缓解（单槽位单帧异常防火带，见 [inferworker-resilience](docs/inferworker-resilience.md)），待合并；线程级自动重启仍未做 |
+| **InferWorker 单点故障** | 中 | 推理线程崩溃 → 全部摄像头无检测结果 | 已缓解并合入 main（PR #4 → `b4286d3`，单槽位单帧异常防火带，见 [inferworker-resilience](docs/inferworker-resilience.md)）；线程级自动重启仍未做 |
 | **PyAV DirectShow 稳定性** | 低 | 特定摄像头驱动可能导致采集中断 | `camera/enumerator.py` 三级枚举 + 拉流验证 |
 | **ONNX 模型兼容性** | 中 | 非标准 ONNX 模型（如 PINTO0309 后处理）可能在新版 ORT 上行为变化 | 锁定 onnxruntime-directml 版本 |
 | **无 GPU 时的性能** | 中 | CPU 下多路全功能推理可能低于实时 | 跳帧机制、UHD 64x64 轻量模型、功能开关 |
@@ -957,7 +957,7 @@ F:\VisionBata\
 
 | 组件 | 故障影响 | 严重程度 |
 |------|----------|----------|
-| InferWorker 线程 | 全部槽位无 AI 检测结果 | 高（工作区已缓解，待合并；见 docs/inferworker-resilience.md） |
+| InferWorker 线程 | 全部槽位无 AI 检测结果 | 高（已缓解并入 main：PR #4 → `b4286d3`；见 docs/inferworker-resilience.md） |
 | MainWindow | 整个应用崩溃 | 高 |
 | 单个 SingleCameraWorker | 对应槽位无画面 | 低（不影响其他槽位） |
 

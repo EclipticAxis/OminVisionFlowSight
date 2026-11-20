@@ -2,7 +2,7 @@
 
 > **版本**：0.4.0（2026-11-20）
 > **范围**：`tests/test_inferworker_pipeline_contract.py`、`visioncore/pipeline/adapters.py`、`ai/inference.py`（InferWorker）、`tests/test_inferworker_migration.py`、`tests/test_inferworker_resilience.py`、`docs/inferworker-pipeline-parity.md`（本文件）、`PROJECT_BIBLE.md`（§11.2 / §12.2 同步）；不改 `ai/tracker.py`、`rust/`
-> **状态**：待合并；Legacy ↔ Pipeline 双模式对拍 22 项（11 scenario × 2 模式）全部转绿，run 级 TargetManager 单写证明 5 项 + 双槽位 slot 信号契约 2 项 + Pipeline runtime 复用与生命周期收口 11 项通过（对拍专项命令 137 项、含 Pipeline/core 扩展命令 168 项、全套件 1336 项通过）
+> **状态**：已合入 main（PR #4 → `b4286d3`，2026-11-20）；Legacy ↔ Pipeline 双模式对拍 22 项（11 scenario × 2 模式）全部转绿，run 级 TargetManager 单写证明 5 项 + 双槽位 slot 信号契约 2 项 + Pipeline runtime 复用与生命周期收口 11 项通过（对拍专项命令 137 项、含 Pipeline/core 扩展命令 168 项、全套件 1336 项通过）
 
 ## 目标与背景
 

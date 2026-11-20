@@ -2,7 +2,7 @@
 
 > **版本**：1.0.0（2026-11-20）
 > **范围**：`ai/inference.py`（InferWorker）、`gui/main_window.py`、`tests/test_inferworker_resilience.py`（新增）
-> **状态**：待合并；本地 6 项防火带新增测试与全套件 1336 项通过（2026-11-20）；后续单写、slot 与 runtime 契约见 [inferworker-pipeline-parity](inferworker-pipeline-parity.md)
+> **状态**：已合入 main（PR #4 → `b4286d3`，2026-11-20）；本地 6 项防火带新增测试与全套件 1336 项通过；后续单写、slot 与 runtime 契约见 [inferworker-pipeline-parity](inferworker-pipeline-parity.md)
 
 ## 目标与背景
 
