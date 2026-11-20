@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import traceback
 import threading
 import time
 import json
@@ -294,12 +295,108 @@ class _FrameSlot:
         self.submitted_ts: float = 0.0
 
 
+class _SlotPipelineRuntime:
+    """每 slot 复用的已 initialize Pipeline runtime（0.4.0 生命周期收口）。
+
+    打包一个 :class:`~visioncore.pipeline.Pipeline`（DetectorStage →
+    TrackerStage → TargetStage → EventStage）与 4 个适配器。相对 0.3.0
+    "每帧新建 Pipeline + 4 adapters 并 initialize/shutdown" 的行为，
+    本类让同一 slot 的连续帧复用同一 runtime：
+
+    - ``pipeline.initialize()`` 只在创建时调用一次（Pipeline 自身幂等，
+      但 runtime 保证全生命周期至多一次成功的 initialize）；
+    - 每帧由 ``InferWorker._run_pipeline_mode`` 更新 det/trk adapter 的
+      当前帧引用、重设 redetect 回调、清零 tgt adapter 的 ``updated``
+      标志与各 adapter 的帧输出缓存，并新建 ``PipelineContext``；
+    - 成功帧**不得** shutdown；仅在异常淘汰（evict）、unregister 移除或
+      stop 批量清理时经 :meth:`shutdown_once` 关闭，且至多一次——
+      shutdown 异常被记录但不中断其他清理。
+
+    生命周期契约详见 docs/inferworker-pipeline-parity.md 0.4.0。
+    """
+
+    __slots__ = (
+        "pipeline", "det_adapter", "trk_adapter", "tgt_adapter",
+        "evt_adapter", "_shutdown_done",
+    )
+
+    def __init__(
+        self,
+        pipeline,
+        det_adapter,
+        trk_adapter,
+        tgt_adapter,
+        evt_adapter,
+    ) -> None:
+        self.pipeline = pipeline
+        self.det_adapter = det_adapter
+        self.trk_adapter = trk_adapter
+        self.tgt_adapter = tgt_adapter
+        self.evt_adapter = evt_adapter
+        self._shutdown_done = False
+
+    @classmethod
+    def create(cls, worker, slot_id: int) -> "_SlotPipelineRuntime":
+        """构建 runtime 并 initialize（异常时 best-effort 关闭后上抛）。
+
+        仅在 ``initialize()`` 成功后返回；初始化失败的半成品不进入
+        worker 的 runtime cache，调用方记 warning 并按既有契约返回 []。
+        """
+        from visioncore.pipeline import Pipeline
+        from visioncore.pipeline.adapters import (
+            InferWorkerDetectorAdapter,
+            InferWorkerTrackerAdapter,
+            InferWorkerTargetManagerAdapter,
+            InferWorkerEventBusAdapter,
+        )
+        from visioncore.pipeline.stages import (
+            DetectorStage, TrackerStage, TargetStage, EventStage,
+        )
+
+        det_adapter = InferWorkerDetectorAdapter(worker)
+        trk_adapter = InferWorkerTrackerAdapter(worker, slot_id)
+        tgt_adapter = InferWorkerTargetManagerAdapter(worker, slot_id)
+        evt_adapter = InferWorkerEventBusAdapter(worker)
+
+        pipeline = Pipeline()
+        pipeline.add_stage(DetectorStage(det_adapter, name="detect"))
+        pipeline.add_stage(TrackerStage(trk_adapter, name="track"))
+        pipeline.add_stage(TargetStage(tgt_adapter, name="targets"))
+        pipeline.add_stage(EventStage(evt_adapter, name="events"))
+
+        runtime = cls(pipeline, det_adapter, trk_adapter, tgt_adapter, evt_adapter)
+        try:
+            pipeline.initialize()
+        except Exception:
+            # 初始化失败：不缓存半成品，best-effort 关闭后上抛，
+            # 由 _run_pipeline_mode 记 warning 并保持"返回 []"行为。
+            runtime.shutdown_once()
+            raise
+        return runtime
+
+    def shutdown_once(self) -> None:
+        """关闭 runtime（幂等：全生命周期至多一次实际 shutdown）。
+
+        shutdown 异常记 warning 但不向上抛——批量清理（stop）时单个
+        runtime 的 teardown 失败不得中断其余 runtime 的清理。
+        """
+        if self._shutdown_done:
+            return
+        self._shutdown_done = True
+        try:
+            self.pipeline.shutdown()
+        except Exception as e:  # noqa: BLE001 —— 清理不得中断其他 runtime
+            logging.warning("Pipeline runtime shutdown error: %s", e)
+
+
 class InferWorker(QThread):
     # VisionCore 未来入口: detection_ready 未来可发射 list[CoreDetection]，
     # 通过 visioncore.core.adapters.to_core_detection() 转换。
 
     detection_ready = pyqtSignal(int, list)
     model_ready = pyqtSignal(str, bool, str)
+    error_occurred = pyqtSignal(int, str)
+    processing_recovered = pyqtSignal(int)
 
     def __init__(self, model_path: str | None = None, conf: float = 0.25, infer_stride: int = 2, backend: str = "auto", parent=None):
         super().__init__(parent)
@@ -362,6 +459,11 @@ class InferWorker(QThread):
         self._last_detections: dict[int, list[dict]] = {}
         self._last_submit_ts_by_slot: dict[int, float] = {}
 
+        # 单槽位单帧异常防火带：每槽位连续处理失败计数（run() 的 try/except 使用）
+        self._slot_failure_counts: dict[int, int] = {}
+        # 失败上报节流：第 1 次及每第 30 次连续失败才记录 ERROR 并 emit error_occurred
+        self._failure_report_interval = 30
+
         # ROI 重检测配置（基于卡尔曼预测框）
         self._person_redetect_enabled = True
         self._person_redetect_max_retries = 2
@@ -412,6 +514,17 @@ class InferWorker(QThread):
         # TargetStage → EventStage）处理，使用 visioncore.pipeline.adapters
         # 中的适配器包装现有后端。Legacy 代码路径完全不变。
         self._pipeline_enabled: bool = False
+        # 单写契约（第 4 步）：Pipeline 模式仅当 TargetStage 确实完成
+        # TargetManager.update_targets 时置 True，run() 尾部据此跳过旁路；
+        # Legacy / 跳帧 / Pipeline 前置失败路径保持 False -> 执行一次 bypass。
+        self._pipeline_target_updated: bool = False
+        # 0.4.0 — Pipeline runtime cache：每 slot 懒创建并复用一个已
+        # initialize 的 runtime（pipeline + 4 adapters）。Legacy 模式
+        # 不创建任何 runtime；set_pipeline_enabled(False) 保留 cache。
+        self._pipeline_runtimes: dict[int, _SlotPipelineRuntime] = {}
+        # 运行中 unregister 不得与推理帧并发 shutdown：先标记 retirement，
+        # 由 inference thread 在后续 run 循环中 shutdown + 淘汰。
+        self._retired_pipeline_slots: set[int] = set()
 
     def set_pipeline_enabled(self, enabled: bool) -> None:
         """切换 Pipeline 模式（C8）。
@@ -423,12 +536,58 @@ class InferWorker(QThread):
         原样运行，业务行为完全不变。
 
         两种模式调用**相同的后端方法**（同一个 YOLO 模型、同一个
-        DetectionTracker、同一个 TargetManager），仅组织方式不同。Pipeline
-        模式的初始版本（C8）不支持 ROI 重检测回调（redetect_callback），
-        该功能在后续里程碑迁移到 Pipeline Stage。
+        DetectionTracker、同一个 TargetManager），仅组织方式不同。
+
+        0.4.0 生命周期收口：切换开关不改变 runtime cache 内容——
+        ``enabled=False``（Legacy）保留已创建的 Pipeline runtime cache
+        但完全不使用（Legacy 不创建、不触碰任何 runtime），
+        ``enabled=True`` 时下一帧直接复用 cache。ROI
+        重检测回调（redetect_callback）经 ``InferWorkerTrackerAdapter``
+        透传给同一个 DetectionTracker，与 Legacy 路径共用
+        ``_make_redetect_callback`` 工厂，计数与 ROI 行为完全一致
+        （接缝对齐第 4 步，见 docs/inferworker-pipeline-parity.md）。
         """
         self._pipeline_enabled = bool(enabled)
         logging.info("Pipeline mode %s", "ENABLED" if enabled else "disabled (legacy)")
+
+    def _get_or_create_pipeline_runtime(self, slot_id: int) -> _SlotPipelineRuntime:
+        """取回或懒创建指定 slot 的已 initialize Pipeline runtime。
+
+        同一 slot 的连续帧复用同一 runtime（0.4.0 实例复用）；不同 slot
+        各自独立。Legacy 模式不调用本方法，不创建任何 runtime。
+        ``initialize()`` 只在创建时执行一次，异常上抛由调用方记 warning。
+        """
+        with self._lock:
+            runtime = self._pipeline_runtimes.get(slot_id)
+            if runtime is not None:
+                return runtime
+        # 创建 + initialize 不放锁内：initialize 可能耗时，且 run 循环
+        # 与 unregister/stop 通过 retirement 标记 + _running 状态串行化，
+        # 同一 slot 的创建只会发生在 inference thread（同一线程）。
+        runtime = _SlotPipelineRuntime.create(self, slot_id)
+        retired = False
+        with self._lock:
+            # 创建期间 slot 可能已被 unregister：运行中的 unregister 只
+            # 标记 retirement（不同步 shutdown），此时新 runtime 不得入
+            # cache；teardown 放到锁外，随后由 _run_pipeline_mode 记 warning
+            # 并返回 []。
+            if slot_id in self._retired_pipeline_slots:
+                retired = True
+            else:
+                self._pipeline_runtimes[slot_id] = runtime
+        if retired:
+            runtime.shutdown_once()
+            raise RuntimeError(
+                f"pipeline runtime for slot {slot_id} retired during creation"
+            )
+        return runtime
+
+    def _discard_pipeline_runtime(self, slot_id: int) -> None:
+        """shutdown 并淘汰指定 slot 的 runtime（异常路径调用，可重入）。"""
+        with self._lock:
+            runtime = self._pipeline_runtimes.pop(slot_id, None)
+        if runtime is not None:
+            runtime.shutdown_once()
 
     def _run_pipeline_mode(
         self,
@@ -437,26 +596,31 @@ class InferWorker(QThread):
         submitted_ts: float,
         frame: np.ndarray,
     ) -> list[dict]:
-        """Pipeline 模式处理一帧（C8）。
+        """Pipeline 模式处理一帧（C8；0.4.0 起 runtime 复用 + 生命周期收口）。
 
-        构建 Pipeline（DetectorStage → TrackerStage → TargetStage →
-        EventStage），使用适配器包装现有后端，运行后提取跟踪检测结果
-        并应用与 Legacy 路径相同的后处理（头部属性、手势、矩形检测、
-        健康监控、延迟标记）。
+        复用每 slot 懒创建、已 initialize 的
+        :class:`_SlotPipelineRuntime`（DetectorStage → TrackerStage →
+        TargetStage → EventStage + 4 适配器），运行后提取跟踪检测结果
+        并应用与 Legacy 命中帧共享的同一后处理实现
+        （``_postprocess_slot_detections``，见契约文档第 4 步）。
+
+        每帧契约（0.4.0）：
+
+        - 更新 det/trk adapter 的当前帧引用（``set_frame_image``）；
+        - 无论开关如何都重设 redetect 回调——enabled 时挂新回调
+          （与 Legacy 共用 ``_make_redetect_callback`` 工厂），
+          disabled 时必须清 ``None``（旧回调不得残留到下一帧）；
+        - 清零 tgt adapter 的 ``updated`` 标志（单写契约的帧内语义）与
+          各 adapter 的帧输出缓存，并新建 ``PipelineContext``；
+        - 成功帧不得 shutdown；initialize/run 异常保持既有行为
+          （记 warning、返回 []、``_pipeline_target_updated`` 记录
+          adapter 的 updated 值），同时该异常 runtime 被 shutdown 并
+          从 cache 淘汰，下一帧可重建。
 
         返回 ``list[dict]``（与 Legacy 路径格式完全一致），供
         ``detection_ready.emit`` 和 ``_bypass_update_targets`` 使用。
         """
-        from visioncore.pipeline import Pipeline, PipelineContext
-        from visioncore.pipeline.adapters import (
-            InferWorkerDetectorAdapter,
-            InferWorkerTrackerAdapter,
-            InferWorkerTargetManagerAdapter,
-            InferWorkerEventBusAdapter,
-        )
-        from visioncore.pipeline.stages import (
-            DetectorStage, TrackerStage, TargetStage, EventStage,
-        )
+        from visioncore.pipeline import PipelineContext
         from visioncore.core.frame import Frame as CoreFrame
 
         original_frame = frame
@@ -466,22 +630,35 @@ class InferWorker(QThread):
             else original_frame
         )
 
-        # 构建适配器（每次帧创建新适配器以设置当前帧引用）
-        det_adapter = InferWorkerDetectorAdapter(self)
+        # 每 slot 懒创建并复用已 initialize 的 runtime（0.4.0）。
+        # initialize 异常保持"记 warning 并返回 []"（runtime 未入 cache，
+        # create 内部已 best-effort 关闭半成品）。
+        try:
+            runtime = self._get_or_create_pipeline_runtime(slot_id)
+        except Exception as e:
+            logging.warning("Pipeline mode error (falling back to empty): %s", e)
+            self._pipeline_target_updated = False
+            return []
+        det_adapter = runtime.det_adapter
+        trk_adapter = runtime.trk_adapter
+        tgt_adapter = runtime.tgt_adapter
+
+        # 每帧更新当前帧引用与 redetect 回调（enabled 新回调 /
+        # disabled 必须清 None，旧回调不得残留）。
         det_adapter.set_frame_image(infer_frame)
-        trk_adapter = InferWorkerTrackerAdapter(self, slot_id)
         trk_adapter.set_frame_image(infer_frame)
-        tgt_adapter = InferWorkerTargetManagerAdapter(self, slot_id)
-        evt_adapter = InferWorkerEventBusAdapter(self)
+        if self._person_redetect_enabled:
+            # ROI 重检测回调：与 Legacy 路径共用同一工厂（对拍契约 #2/#3）。
+            trk_adapter.set_redetect_callback(self._make_redetect_callback(infer_frame))
+        else:
+            trk_adapter.set_redetect_callback(None)
 
-        # 构建 Pipeline
-        p = Pipeline()
-        p.add_stage(DetectorStage(det_adapter, name="detect"))
-        p.add_stage(TrackerStage(trk_adapter, name="track"))
-        p.add_stage(TargetStage(tgt_adapter, name="targets"))
-        p.add_stage(EventStage(evt_adapter, name="events"))
+        # 每帧重置 adapter 帧输出与单写标志（上一帧的 updated 不得泄漏）。
+        tgt_adapter.updated = False
+        trk_adapter.last_tracked_dicts = []
+        det_adapter.last_raw_detections = []
 
-        # 构建 Context 并运行
+        # 每帧新建 Context 并运行
         ctx = PipelineContext.empty(timestamp=submitted_ts)
         ctx.frame = CoreFrame(
             frame_id=frame_id,
@@ -491,68 +668,32 @@ class InferWorker(QThread):
         )
 
         try:
-            p.initialize()
-            p.run(ctx)
+            runtime.pipeline.run(ctx)
         except Exception as e:
             logging.warning("Pipeline mode error (falling back to empty): %s", e)
+            # TargetStage 前失败时 adapter.updated 为 False -> run() 尾部
+            # 仍会执行一次 bypass（过期清理语义，单写契约）。
+            self._pipeline_target_updated = tgt_adapter.updated
+            # 异常 runtime shutdown 并从 cache 淘汰，下一帧可重建。
+            self._discard_pipeline_runtime(slot_id)
             return []
-        finally:
-            try:
-                p.shutdown()
-            except Exception:
-                pass
+
+        # 成功帧不得 shutdown（runtime 复用，生命周期收口）。
+        # 单写契约：TargetStage 确实完成 update 的帧置 True，
+        # run() 尾部据此跳过 _bypass_update_targets，避免同帧二次写入。
+        self._pipeline_target_updated = tgt_adapter.updated
 
         # 从 Tracker 适配器恢复跟踪后的检测 dicts（含 track_id 等）
         detections = trk_adapter.last_tracked_dicts
 
-        # --- 后处理（与 Legacy 路径一致）---
-        if self._should_run_yolo_inference():
-            detections = self._attach_head_attributes(detections, infer_frame, frame_id)
-            detections = self._attach_gestures(detections)
-        else:
-            detections = []
-        rectangle_detections = self._run_rectangle_detection(slot_id, original_frame)
-        if rectangle_detections:
-            detections = detections + rectangle_detections
-        hand_gesture_detections = self._run_hand_gesture_detection(original_frame, detections)
-        if hand_gesture_detections:
-            detections = detections + hand_gesture_detections
-        detections = self._filter_display_detections(final_dedupe(detections))
-
-        # 健康监控
-        self._health_monitor.update(detections)
-        if not self._health_monitor.is_healthy(threshold=0.35):
-            if not self._health_monitor._fallback_active and (
-                self._denoise_method != "none" or self._filter_type != "ukf" or self._person_redetect_enabled
-            ):
-                logging.warning(
-                    "Health monitor triggered fallback (pipeline mode): person_conf=%.3f",
-                    self._health_monitor.get_recent_mean(),
-                )
-                self._health_monitor.trigger_fallback({
-                    "denoise": (self._denoise_method, self._denoise_strength),
-                    "filter": self._filter_type,
-                    "redetect": self._person_redetect_enabled,
-                })
-                self.set_denoise("none", 5)
-                self.set_filter_type("ukf")
-                self.set_person_redetect(enabled=False)
-        elif self._health_monitor.check_recovery():
-            snap = self._health_monitor.restore_snapshot()
-            if snap:
-                logging.info("Health monitor recovery (pipeline mode)")
-                self.set_denoise(snap["denoise"][0], snap["denoise"][1])
-                self.set_filter_type(snap["filter"])
-                self.set_person_redetect(enabled=snap["redetect"])
-
-        # 延迟标记
-        latency_ms = (time.monotonic() - submitted_ts) * 1000.0
-        for det in detections:
-            det["source_frame_id"] = frame_id
-            det["source_ts"] = submitted_ts
-            det["latency_ms"] = latency_ms
-
-        return detections
+        # 后处理链（架构第 4 步抽取）：与 Legacy 命中帧共用同一实现
+        # _postprocess_slot_detections，保证两侧逐事件一致。后处理异常
+        # 仍由 run() 的单槽位单帧防火带兜底（不改变 shutdown 语义：
+        # runtime 保持存活，下一帧继续复用）。
+        return self._postprocess_slot_detections(
+            slot_id, frame_id, submitted_ts, detections,
+            infer_frame, original_frame, mode="pipeline",
+        )
 
     def set_head_classifier(self, enabled: bool, model_path: str | None = None, stride: int = 2) -> None:
         """运行时启停或切换头部属性分类模型。"""
@@ -1928,7 +2069,10 @@ class InferWorker(QThread):
             # #endregion
 
     def register_slot(self, slot_id: int) -> None:
+        # 0.4.0：重新注册同 slot 取消 retirement（运行中 unregister 的
+        # 延迟清理标记），保留已复用的 runtime cache 条目。
         with self._lock:
+            self._retired_pipeline_slots.discard(slot_id)
             if slot_id not in self._buffers:
                 self._buffers[slot_id] = _FrameSlot()
                 self._trackers[slot_id] = DetectionTracker(
@@ -1949,16 +2093,274 @@ class InferWorker(QThread):
                 )
                 self._rectangle_trackers[slot_id] = RectangleTracker.from_preset(self._rectangle_sensitivity)
                 self._last_submit_ts_by_slot.pop(slot_id, None)
+                self._slot_failure_counts.pop(slot_id, None)
                 logging.info("InferWorker registered slot %d", slot_id)
 
     def unregister_slot(self, slot_id: int) -> None:
+        # 0.4.0 生命周期收口：worker 未运行时可安全直接 shutdown + 移除
+        # runtime；运行中不得与推理帧并发 shutdown，仅标记 retirement，
+        # 由 inference thread 在后续 run 循环中清理。
+        runtime = None
         with self._lock:
+            # stop() 会先将 _running 置 False，但 QThread 可能仍在收尾；
+            # 两个条件任一为真都走延迟清理，避免并发 shutdown。
+            running = self._running or self.isRunning()
             self._buffers.pop(slot_id, None)
             self._trackers.pop(slot_id, None)
             self._rectangle_trackers.pop(slot_id, None)
             self._last_detections.pop(slot_id, None)
             self._last_submit_ts_by_slot.pop(slot_id, None)
+            self._slot_failure_counts.pop(slot_id, None)
+            if running:
+                self._retired_pipeline_slots.add(slot_id)
+            else:
+                self._retired_pipeline_slots.discard(slot_id)
+                runtime = self._pipeline_runtimes.pop(slot_id, None)
             logging.info("InferWorker unregistered slot %d", slot_id)
+        # 锁外执行 shutdown（只持锁做状态变更，teardown 不阻塞 submit）。
+        if runtime is not None:
+            runtime.shutdown_once()
+
+    def _make_redetect_callback(self, frame: np.ndarray):
+        """构造 ROI 重检测回调（Legacy 与 Pipeline 共用的单点工厂）。
+
+        回调以 ``(预测框, 原置信度)`` 签名委托 ``_redetect_person_in_roi``，
+        并精确维护 ``_redetect_attempt_count`` / ``_redetect_success_count`` /
+        ``_redetect_failed_count`` 计数（成功 +1/+1/0，失败 +1/0/+1）。
+        ``frame`` 必须与主推理输入为同一 ndarray。
+
+        参数:
+            frame: 与主推理相同输入帧（去噪后）。
+        """
+        def _redetect_cb(predicted_box, original_confidence):
+            self._redetect_attempt_count += 1
+            det = self._redetect_person_in_roi(frame, predicted_box, original_confidence)
+            if det is not None:
+                self._redetect_success_count += 1
+            else:
+                self._redetect_failed_count += 1
+            return det
+        return _redetect_cb
+
+    def _process_slot_frame(
+        self,
+        slot_id: int,
+        frame_id: int,
+        submitted_ts: float,
+        frame: np.ndarray,
+    ) -> list[dict]:
+        """处理单个槽位的一帧（机械提取自 run() 的循环体）。
+
+        覆盖三条路径：Pipeline 模式命中帧、Legacy 模式命中帧、跳帧预测。
+        默认行为、处理顺序、latency/source 标记与 ``_last_detections`` 更新与原
+        实现完全一致；异常由 run() 的防火带兜底（见 ``_record_slot_failure``）。
+        """
+        # 单写标志只描述当前帧。若上一帧在 TargetStage 写入后、后处理途中
+        # 异常退出，run() 不会消费该标志；开始新帧前必须清除，避免抑制 bypass。
+        self._pipeline_target_updated = False
+        # --- 跳帧调度：只有命中帧才跑推理，跳帧用卡尔曼预测填充 ---
+        should_infer = (frame_id % self._infer_stride) == 0
+        if self._pipeline_enabled and should_infer:
+            # --- Pipeline Mode (C8) ---
+            detections = self._run_pipeline_mode(slot_id, frame_id, submitted_ts, frame)
+            self._last_detections[slot_id] = detections
+        elif should_infer:
+            # 保留原始帧，不同任务按需选择输入
+            original_frame = frame
+            if self._should_run_yolo_inference():
+                # 人物/姿态检测：可选去噪
+                infer_frame = (
+                    self._denoise_frame(original_frame)
+                    if self._denoise_method != "none"
+                    else original_frame
+                )
+                raw_detections = self._run_inference(infer_frame)
+                tracker = self._trackers.get(slot_id)
+                if tracker is not None:
+                    if self._person_redetect_enabled:
+                        # 注入重检测回调（与 Pipeline 模式共用同一回调工厂）
+                        detections = tracker.update(
+                            raw_detections,
+                            redetect_callback=self._make_redetect_callback(infer_frame),
+                            frame=infer_frame,
+                        )
+                    else:
+                        detections = tracker.update(raw_detections, frame=infer_frame)
+                    # 更新所有 track 的外观直方图
+                    tracker.update_appearance(infer_frame)
+                else:
+                    detections = raw_detections
+            else:
+                infer_frame = original_frame
+                detections = []
+            # 后处理链（架构第 4 步抽取）：与 Pipeline 模式共用同一实现
+            # _postprocess_slot_detections（头部属性 → 身体手势 → 矩形 → 手部
+            # → dedupe/display → 健康回退/恢复 → source/latency 标记）。
+            detections = self._postprocess_slot_detections(
+                slot_id, frame_id, submitted_ts, detections,
+                infer_frame, original_frame, mode="legacy",
+            )
+            self._last_detections[slot_id] = detections
+        else:
+            # 跳帧路径：用卡尔曼预测更新 person 位置，非 person 项复用上次结果
+            tracker = self._trackers.get(slot_id)
+            if tracker is not None:
+                person_predicted = tracker.predict_step()
+                last = self._last_detections.get(slot_id, [])
+                non_person = [d for d in last if d.get("label") != "person"]
+                detections = person_predicted + non_person
+                self._last_detections[slot_id] = detections
+            else:
+                detections = self._last_detections.get(slot_id, [])
+
+        # #region debug-point A:infer-emit
+        if self._debug_emit_reports < 20:
+            _debug_report(
+                "A",
+                "ai/inference.py:run",
+                "detection emitted",
+                {
+                    "slot_id": slot_id,
+                    "frame_id": frame_id,
+                    "inferred": should_infer,
+                    "detections_count": len(detections),
+                },
+            )
+            self._debug_emit_reports += 1
+        # #endregion
+        return detections
+
+    def _postprocess_slot_detections(
+        self,
+        slot_id: int,
+        frame_id: int,
+        submitted_ts: float,
+        detections: list[dict],
+        infer_frame: np.ndarray,
+        original_frame: np.ndarray,
+        *,
+        mode: str,
+    ) -> list[dict]:
+        """共享后处理链：Legacy 命中帧与 Pipeline 模式调用同一实现（第 4 步抽取）。
+
+        处理顺序（契约 #1 的后半段，两侧逐事件一致）：``_should_run_yolo_inference``
+        分支下的头部属性 → 身体手势 → 矩形检测 → 手部手势 → dedupe/display →
+        健康监控回退/恢复 → source/latency 标记。两侧行为完全一致，仅健康
+        日志文案按 ``mode`` 区分（``"legacy"`` / ``"pipeline"``，原样保留）。
+
+        参数:
+            slot_id: 采集槽位 ID（矩形检测按槽位取 tracker）。
+            frame_id: 当前帧号（source 标记用）。
+            submitted_ts: 帧提交时间戳（latency 与 source 标记用）。
+            detections: 进入后处理链的检测 dicts（Legacy 为 tracker.update
+                输出，Pipeline 为 TrackerStage 恢复结果）。
+            infer_frame: 推理输入帧（去噪后；供头部属性/身体手势使用）。
+            original_frame: 原始帧（供矩形/手部检测保留边缘细节）。
+            mode: 健康日志文案模式（``"legacy"`` 或 ``"pipeline"``）。
+
+        返回:
+            带 ``source_frame_id`` / ``source_ts`` / ``latency_ms`` 标记的
+            最终检测列表。
+        """
+        if self._should_run_yolo_inference():
+            detections = self._attach_head_attributes(detections, infer_frame, frame_id)
+            detections = self._attach_gestures(detections)
+        else:
+            detections = []
+        # 矩形检测与手势识别使用原始帧，保留边缘细节
+        rectangle_detections = self._run_rectangle_detection(slot_id, original_frame)
+        if rectangle_detections:
+            detections = detections + rectangle_detections
+        hand_gesture_detections = self._run_hand_gesture_detection(original_frame, detections)
+        if hand_gesture_detections:
+            detections = detections + hand_gesture_detections
+        detections = self._filter_display_detections(final_dedupe(detections))
+
+        # 运行时健康监控：人物置信度持续低迷时自动回退到保守配置
+        self._health_monitor.update(detections)
+        if not self._health_monitor.is_healthy(threshold=0.35):
+            if not self._health_monitor._fallback_active and (
+                self._denoise_method != "none" or self._filter_type != "ukf" or self._person_redetect_enabled
+            ):
+                if mode == "pipeline":
+                    logging.warning(
+                        "Health monitor triggered fallback (pipeline mode): person_conf=%.3f",
+                        self._health_monitor.get_recent_mean(),
+                    )
+                else:
+                    logging.warning(
+                        "Health monitor triggered fallback: person_conf=%.3f; "
+                        "disabling denoise, reverting to ukf, disabling redetect",
+                        self._health_monitor.get_recent_mean(),
+                    )
+                # 保存快照后回退
+                self._health_monitor.trigger_fallback({
+                    "denoise": (self._denoise_method, self._denoise_strength),
+                    "filter": self._filter_type,
+                    "redetect": self._person_redetect_enabled,
+                })
+                self.set_denoise("none", 5)
+                self.set_filter_type("ukf")
+                self.set_person_redetect(enabled=False)
+        elif self._health_monitor.check_recovery():
+            # 恢复用户原始配置
+            snap = self._health_monitor.restore_snapshot()
+            if snap:
+                if mode == "pipeline":
+                    logging.info("Health monitor recovery (pipeline mode)")
+                else:
+                    logging.info(
+                        "Health monitor recovery: restoring user config denoise=%s filter=%s redetect=%s",
+                        snap["denoise"][0], snap["filter"], snap["redetect"],
+                    )
+                self.set_denoise(snap["denoise"][0], snap["denoise"][1])
+                self.set_filter_type(snap["filter"])
+                self.set_person_redetect(enabled=snap["redetect"])
+
+        latency_ms = (time.monotonic() - submitted_ts) * 1000.0
+        for det in detections:
+            det["source_frame_id"] = frame_id
+            det["source_ts"] = submitted_ts
+            det["latency_ms"] = latency_ms
+        return detections
+
+    # ------------------------------------------------------------------
+    # 单槽位单帧异常防火带：失败计数 / 节流上报 / 恢复
+    # ------------------------------------------------------------------
+
+    def _record_slot_failure(self, slot_id: int, frame_id: int, exc: Exception) -> None:
+        """记录一帧处理失败；第 1 次及每第 30 次连续失败才记 ERROR 并 emit。
+
+        异常帧跳过该帧的 detection_ready 与 _bypass_update_targets，保留最后有效
+        结果，不影响同批其他槽位与后续帧。
+        """
+        count = self._slot_failure_counts.get(slot_id, 0) + 1
+        self._slot_failure_counts[slot_id] = count
+        if count == 1 or count % self._failure_report_interval == 0:
+            logging.error(
+                "InferWorker slot %d frame %d processing failed (consecutive failures: %d); "
+                "keeping last good result. Exception: %s\n%s",
+                slot_id,
+                frame_id,
+                count,
+                exc,
+                traceback.format_exc(),
+            )
+            self.error_occurred.emit(
+                slot_id,
+                f"采集位 {slot_id + 1} 第 {frame_id} 帧处理失败（连续第 {count} 次）: {exc!r}",
+            )
+
+    def _clear_slot_failure(self, slot_id: int) -> None:
+        """帧处理成功后调用：此前有失败则清零并上报恢复（每轮失败只上报一次）。"""
+        count = self._slot_failure_counts.pop(slot_id, None)
+        if count is not None:
+            logging.info(
+                "InferWorker slot %d processing recovered after %d consecutive failure(s)",
+                slot_id,
+                count,
+            )
+            self.processing_recovered.emit(slot_id)
 
     def run(self) -> None:
         self._running = True
@@ -1968,6 +2370,19 @@ class InferWorker(QThread):
         while self._running:
             if self._switch_model_if_needed():
                 continue
+
+            # 0.4.0：清理运行中 unregister 标记 retirement 的 slot runtime。
+            # 本方法就是 inference thread，此处 shutdown 不会与推理帧并发；
+            # 重注册（取消 retirement）发生在帧处理前则保留 runtime。
+            with self._lock:
+                retired = sorted(self._retired_pipeline_slots)
+                self._retired_pipeline_slots.clear()
+                retired_runtimes = [
+                    (s, self._pipeline_runtimes.pop(s, None)) for s in retired
+                ]
+            for _s, rt in retired_runtimes:
+                if rt is not None:
+                    rt.shutdown_once()
 
             snapshots: list[tuple[int, int, float, np.ndarray]] = []
 
@@ -1981,121 +2396,24 @@ class InferWorker(QThread):
                 if not self._running:
                     break
 
-                # --- 跳帧调度：只有命中帧才跑推理，跳帧用卡尔曼预测填充 ---
-                should_infer = (frame_id % self._infer_stride) == 0
-                if self._pipeline_enabled and should_infer:
-                    # --- Pipeline Mode (C8) ---
-                    detections = self._run_pipeline_mode(slot_id, frame_id, submitted_ts, frame)
-                    self._last_detections[slot_id] = detections
-                elif should_infer:
-                    # 保留原始帧，不同任务按需选择输入
-                    original_frame = frame
-                    if self._should_run_yolo_inference():
-                        # 人物/姿态检测：可选去噪
-                        infer_frame = (
-                            self._denoise_frame(original_frame)
-                            if self._denoise_method != "none"
-                            else original_frame
-                        )
-                        raw_detections = self._run_inference(infer_frame)
-                        tracker = self._trackers.get(slot_id)
-                        if tracker is not None:
-                            if self._person_redetect_enabled:
-                                # 注入重检测回调（使用与主推理相同的输入）
-                                def _redetect_cb(predicted_box, original_confidence, _frame=infer_frame):
-                                    self._redetect_attempt_count += 1
-                                    det = self._redetect_person_in_roi(_frame, predicted_box, original_confidence)
-                                    if det is not None:
-                                        self._redetect_success_count += 1
-                                    else:
-                                        self._redetect_failed_count += 1
-                                    return det
-                                detections = tracker.update(raw_detections, redetect_callback=_redetect_cb, frame=infer_frame)
-                            else:
-                                detections = tracker.update(raw_detections, frame=infer_frame)
-                            # 更新所有 track 的外观直方图
-                            tracker.update_appearance(infer_frame)
-                        else:
-                            detections = raw_detections
-                        detections = self._attach_head_attributes(detections, infer_frame, frame_id)
-                        detections = self._attach_gestures(detections)
-                    else:
-                        detections = []
-                    # 矩形检测与手势识别使用原始帧，保留边缘细节
-                    rectangle_detections = self._run_rectangle_detection(slot_id, original_frame)
-                    if rectangle_detections:
-                        detections = detections + rectangle_detections
-                    hand_gesture_detections = self._run_hand_gesture_detection(original_frame, detections)
-                    if hand_gesture_detections:
-                        detections = detections + hand_gesture_detections
-                    detections = self._filter_display_detections(final_dedupe(detections))
-                    # 运行时健康监控：人物置信度持续低迷时自动回退到保守配置
-                    self._health_monitor.update(detections)
-                    if not self._health_monitor.is_healthy(threshold=0.35):
-                        if not self._health_monitor._fallback_active and (
-                            self._denoise_method != "none" or self._filter_type != "ukf" or self._person_redetect_enabled
-                        ):
-                            logging.warning(
-                                "Health monitor triggered fallback: person_conf=%.3f; "
-                                "disabling denoise, reverting to ukf, disabling redetect",
-                                self._health_monitor.get_recent_mean(),
-                            )
-                            # 保存快照后回退
-                            self._health_monitor.trigger_fallback({
-                                "denoise": (self._denoise_method, self._denoise_strength),
-                                "filter": self._filter_type,
-                                "redetect": self._person_redetect_enabled,
-                            })
-                            self.set_denoise("none", 5)
-                            self.set_filter_type("ukf")
-                            self.set_person_redetect(enabled=False)
-                    elif self._health_monitor.check_recovery():
-                        # 恢复用户原始配置
-                        snap = self._health_monitor.restore_snapshot()
-                        if snap:
-                            logging.info(
-                                "Health monitor recovery: restoring user config denoise=%s filter=%s redetect=%s",
-                                snap["denoise"][0], snap["filter"], snap["redetect"],
-                            )
-                            self.set_denoise(snap["denoise"][0], snap["denoise"][1])
-                            self.set_filter_type(snap["filter"])
-                            self.set_person_redetect(enabled=snap["redetect"])
-                    latency_ms = (time.monotonic() - submitted_ts) * 1000.0
-                    for det in detections:
-                        det["source_frame_id"] = frame_id
-                        det["source_ts"] = submitted_ts
-                        det["latency_ms"] = latency_ms
-                    self._last_detections[slot_id] = detections
-                else:
-                    # 跳帧路径：用卡尔曼预测更新 person 位置，非 person 项复用上次结果
-                    tracker = self._trackers.get(slot_id)
-                    if tracker is not None:
-                        person_predicted = tracker.predict_step()
-                        last = self._last_detections.get(slot_id, [])
-                        non_person = [d for d in last if d.get("label") != "person"]
-                        detections = person_predicted + non_person
-                        self._last_detections[slot_id] = detections
-                    else:
-                        detections = self._last_detections.get(slot_id, [])
+                # --- 单槽位单帧异常防火带：任何处理异常只跳过该帧，不得退出线程 ---
+                try:
+                    detections = self._process_slot_frame(slot_id, frame_id, submitted_ts, frame)
+                except Exception as exc:  # noqa: BLE001 —— 防火带必须兜住所有异常
+                    self._record_slot_failure(slot_id, frame_id, exc)
+                    continue
+                self._clear_slot_failure(slot_id)
 
-                # #region debug-point A:infer-emit
-                if self._debug_emit_reports < 20:
-                    _debug_report(
-                        "A",
-                        "ai/inference.py:run",
-                        "detection emitted",
-                        {
-                            "slot_id": slot_id,
-                            "frame_id": frame_id,
-                            "inferred": should_infer,
-                            "detections_count": len(detections),
-                        },
-                    )
-                    self._debug_emit_reports += 1
-                # #endregion
                 self.detection_ready.emit(slot_id, detections)
-                # VisionCore 旁路：更新 TargetManager（不影响现有输出）
-                self._bypass_update_targets(slot_id, detections, submitted_ts)
+                # VisionCore 旁路：更新 TargetManager（不影响现有输出）。
+                # 单写契约（第 4 步）：仅当 Pipeline 模式的 TargetStage 确实
+                # 完成 update（_pipeline_target_updated）才跳过旁路；Legacy、
+                # 跳帧、Pipeline 前置失败返回 [] 的路径仍执行一次 bypass，
+                # 保留过期清理语义。禁止按 pipeline_enabled 盲跳。
+                if self._pipeline_target_updated:
+                    self._pipeline_target_updated = False
+                else:
+                    self._bypass_update_targets(slot_id, detections, submitted_ts)
 
             if not snapshots:
                 time.sleep(0.001)
@@ -2105,8 +2423,20 @@ class InferWorker(QThread):
     def stop(self) -> None:
         self._running = False
         self.wait(3000)
-        if self.isRunning():
+        still_running = self.isRunning()
+        if still_running:
             logging.warning("InferWorker did not terminate within timeout")
+        # 0.4.0 生命周期收口：线程已结束（或从未启动）时可安全 shutdown
+        # 所有 runtime 并清空 cache（每个至多 shutdown 一次，单个异常不
+        # 中断其余清理）。线程仍在运行不得并发 shutdown，保留 cache 由
+        # 后续 stop/.unregister 处理。
+        if not still_running:
+            with self._lock:
+                runtimes = list(self._pipeline_runtimes.values())
+                self._pipeline_runtimes.clear()
+                self._retired_pipeline_slots.clear()
+            for rt in runtimes:
+                rt.shutdown_once()
         if self._hand_gesture_recognizer is not None:
             self._hand_gesture_recognizer.close()
 

@@ -41,17 +41,23 @@ class HandGestureRecognizer:
         if w <= 0 or h <= 0:
             return []
 
+        # MediaPipe 0.10.14 reference mode 要求 process 输入为 C 连续数组；
+        # 连续输入不得额外复制（ascontiguousarray 原样返回），非连续 ROI
+        # 切片才复制为连续副本。只在实际传给 process 的数组上设置 writeable=False，
+        # 并在成功/异常两条路径都恢复 process 前数组的原始 writeable 状态。
+        process_frame = np.ascontiguousarray(frame)
+        was_writeable = bool(process_frame.flags.writeable)
         try:
-            frame.flags.writeable = False
-            results = hands.process(frame)
-            frame.flags.writeable = True
+            process_frame.flags.writeable = False
+            results = hands.process(process_frame)
         except Exception as err:
             logging.error("MediaPipe hand detection failed: %s", err)
+            return []
+        finally:
             try:
-                frame.flags.writeable = True
+                process_frame.flags.writeable = was_writeable
             except Exception:
                 pass
-            return []
 
         if not results.multi_hand_landmarks:
             return []
