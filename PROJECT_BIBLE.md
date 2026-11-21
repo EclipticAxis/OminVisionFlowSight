@@ -264,7 +264,7 @@ VisionBata（内部代号 VisionDataPlatform，简称 VDP）是一个**桌面级
 
 #### `start.bat` — Windows 启动脚本
 
-通过 `cd /d "%~dp0"` 切换到脚本所在目录，并调用 `"%~dp0venv\Scripts\python.exe" main.py`。项目目录移动后无需修改脚本；仅启动失败（非零退出码）时暂停以保留错误输出。
+通过 `cd /d "%~dp0"` 切换到脚本所在目录，并调用 `"%~dp0venv\Scripts\python.exe" main.py`。项目目录移动后无需修改脚本；仅启动失败（非零退出码）时暂停以保留错误输出。仓内 `venv` 不存在时（如 GitHub 新克隆），脚本打印纯 ASCII 提示（避免 cmd 中文代码页乱码）并回退到 PATH 上的 `python`。
 
 ---
 
@@ -790,13 +790,14 @@ _clear_slot_caches() 清除缓存
 ### 10.1 依赖安装
 
 ```bash
-# 创建虚拟环境
+# 创建虚拟环境（需 Python 3.11 / 3.12；mediapipe 0.10.14 暂无 3.13+ 预编译包）
 python -m venv venv
 
-# 激活虚拟环境 (Windows)
-venv\Scripts\activate
+# 激活虚拟环境（Windows，按终端二选一）
+venv\Scripts\Activate.ps1   # PowerShell（策略受限时先 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned）
+venv\Scripts\activate.bat   # CMD
 
-# 安装依赖
+# 安装依赖（未激活时：venv\Scripts\python.exe -m pip install -r requirements.txt）
 pip install -r requirements.txt
 
 # 额外：ESPCN 超分辨率模型（可选）
@@ -844,9 +845,9 @@ MainWindow.closeEvent()
 ### 10.5 目录结构要求
 
 ```
-F:\VisionBata\
+<仓库根目录>\
 ├── main.py              # 入口（必须）
-├── start.bat            # 启动脚本（自动定位项目目录与 venv）
+├── start.bat            # 启动脚本（自动定位项目目录与 venv；venv 缺失时提示并回退 PATH python）
 ├── venv/                # 虚拟环境（必须）
 ├── models/              # 模型文件（必须至少含 yolov8n.pt）
 ├── ai/                  # 推理模块（必须）

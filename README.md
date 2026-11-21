@@ -3,7 +3,7 @@
 > 桌面级多路视频智能分析平台 —— 在一台普通 PC 上，同时接入多路摄像头，实时完成目标检测、跟踪、姿态与属性识别，并将结构化结果对外发布。
 
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue.svg)](./LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.11--3.12-blue.svg)](https://www.python.org/)
 [![Rust](https://img.shields.io/badge/tracker%20core-Rust%20(PyO3)-orange.svg)](./rust/omintrack)
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](#技术栈)
 
@@ -80,26 +80,48 @@
 
 ## 快速开始
 
+> **Python 版本**：需要 **Python 3.11 或 3.12**。依赖 `mediapipe>=0.10.14,<0.10.15` 仅提供 cp39–cp312 预编译包，Python 3.13+ 会在 `pip install` 阶段直接失败。
+
 ### 1. 克隆与安装
 
 ```bash
 git clone https://github.com/EclipticAxis/OminVisionFlowSight.git
 cd OminVisionFlowSight
 
-# 创建虚拟环境并安装依赖（Windows 示例）
+# 创建虚拟环境
 python -m venv venv
-venv\Scripts\activate
+```
+
+激活虚拟环境（按终端类型二选一）：
+
+```powershell
+# PowerShell（Windows 11 默认终端）
+venv\Scripts\Activate.ps1
+# 若提示“禁止运行脚本”，先执行：Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+```bat
+:: CMD
+venv\Scripts\activate.bat
+```
+
+安装依赖（未激活虚拟环境时，可用 `venv\Scripts\python.exe -m pip` 代替 `pip`）：
+
+```bash
 pip install -r requirements.txt
 ```
 
 ### 2. 启动主程序
 
 ```bash
-# 图形界面（多路相机网格）
+# 图形界面（多路相机网格）；虚拟环境已激活时
 python main.py
+
+# 未激活时，用仓内解释器直接启动（效果相同，可避开激活问题）
+venv\Scripts\python.exe main.py
 ```
 
-Windows 用户也可直接运行随附的 `start.bat`。脚本通过 `%~dp0` 定位自身目录及仓内 `venv`，移动项目目录后无需修改路径：
+Windows 用户也可直接运行随附的 `start.bat`。脚本通过 `%~dp0` 定位自身目录及仓内 `venv`，移动项目目录后无需修改路径。**注意**：`venv/` 不随仓库分发，新克隆后需先完成第 1 步创建虚拟环境并安装依赖；缺少 `venv` 时脚本会打印提示并回退到 PATH 上的 `python`：
 
 ```bat
 start.bat
