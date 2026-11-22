@@ -8,7 +8,7 @@ import json
 import time
 import urllib.request
 
-from PyQt6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, Qt, QTimer
+from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer
 from PyQt6.QtGui import QCloseEvent, QColor, QPalette
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QVBoxLayout,
+    QWIDGETSIZE_MAX,
     QWidget,
 )
 
@@ -125,8 +126,8 @@ class MainWindow(QMainWindow):
         self._grid_layout: QGridLayout | None = None
         self._is_frame_flipped = True
         self._ai_feature_animation: QPropertyAnimation | None = None
-        self._gesture_options_animation: QParallelAnimationGroup | None = None
-        self._rectangle_options_animation: QParallelAnimationGroup | None = None
+        self._gesture_options_animation: QPropertyAnimation | None = None
+        self._rectangle_options_animation: QPropertyAnimation | None = None
 
         self._recording_output_dir = SettingsDialog.load_output_dir()
         self._ai_conf = SettingsDialog.load_ai_conf()
@@ -284,6 +285,9 @@ class MainWindow(QMainWindow):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # 垂直滚动条常驻（5px）：防止内容高度跨越视口阈值时滚动条出现/消失，
+        # 导致 viewport 宽度 ±5px 抖动（表现为整个侧栏水平晃动）。
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
 
         content = QWidget()
         content.setObjectName("panelContent")
@@ -768,7 +772,9 @@ class MainWindow(QMainWindow):
         panel = self._ai_feature_panel
         if expanded:
             panel.setVisible(True)
-            panel.setMaximumHeight(panel.sizeHint().height())
+            # 展开后必须取消高度钳制：若钳在展开瞬间的 sizeHint 上，
+            # 之后子选项面板再展开时会被旧钳制值挤压（内容重叠/掉字）。
+            panel.setMaximumHeight(QWIDGETSIZE_MAX)
 
         effect = panel.graphicsEffect()
         if not isinstance(effect, QGraphicsOpacityEffect):
@@ -929,68 +935,75 @@ class MainWindow(QMainWindow):
         self._refresh_dashboard(f"矩形色差阈值：{self._ai_rectangle_color_threshold:.1f}")
 
     def _set_gesture_options_visible(self, visible: bool, animated: bool = True) -> None:
-        panel = self._gesture_options_panel
-        if self._gesture_options_animation is not None:
-            self._gesture_options_animation.stop()
-            self._gesture_options_animation = None
-
-        target_height = panel.sizeHint().height() if visible else 0
-        if not animated:
-            panel.setVisible(visible)
-            panel.setMaximumHeight(target_height)
-            return
-        if visible:
-            panel.setVisible(True)
-
-        height_anim = QPropertyAnimation(panel, b"maximumHeight", self)
-        height_anim.setDuration(160)
-        height_anim.setStartValue(panel.maximumHeight())
-        height_anim.setEndValue(target_height)
-        height_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-
-        group = QParallelAnimationGroup(self)
-        group.addAnimation(height_anim)
-
-        def _cleanup() -> None:
-            panel.setVisible(visible)
-            panel.setMaximumHeight(target_height)
-            self._gesture_options_animation = None
-
-        group.finished.connect(_cleanup)
-        self._gesture_options_animation = group
-        group.start()
+        self._apply_options_panel_visibility(
+            self._gesture_options_panel, "_gesture_options_animation", visible, animated
+        )
 
     def _set_rectangle_options_visible(self, visible: bool, animated: bool = True) -> None:
-        panel = self._rectangle_options_panel
-        if self._rectangle_options_animation is not None:
-            self._rectangle_options_animation.stop()
-            self._rectangle_options_animation = None
+        self._apply_options_panel_visibility(
+            self._rectangle_options_panel, "_rectangle_options_animation", visible, animated
+        )
 
-        target_height = panel.sizeHint().height() if visible else 0
+    def _apply_options_panel_visibility(
+        self, panel: QWidget, anim_attr: str, visible: bool, animated: bool
+    ) -> None:
+        """折叠/展开 AI 子选项面板。
+
+        契约（docs/sidebar-options-animation.md）：与 `_animate_ai_feature_panel`
+        同款的"瞬时几何 + 透明度渐变"，禁止逐帧动画 `maximumHeight`——面板位于
+        `QScrollArea`（widgetResizable）内，逐帧高度变化会让整条布局链（4 张
+        squircle 卡片）每帧重排，并与垂直滚动条出现/消失引起的视口宽度变化
+        叠加振荡，表现为卡顿掉帧与整个侧栏抖动。
+        """
+        running = getattr(self, anim_attr, None)
+        settled = (
+            not panel.isHidden() and panel.maximumHeight() > 0
+            if visible
+            else panel.isHidden() and panel.maximumHeight() == 0
+        )
+        if running is None and settled and panel.graphicsEffect() is None:
+            return  # 已处目标状态：_sync_feature_toggle_states 每次都调用，必须 no-op
+        if running is not None:
+            running.stop()
+            setattr(self, anim_attr, None)
+
+        # 展开 = 取消高度钳制（QWIDGETSIZE_MAX），由布局按内容自适应；
+        # 用 sizeHint 钳制会在父面板尺寸变化后挤压内容。收起 = 钳到 0。
+        target_height = QWIDGETSIZE_MAX if visible else 0
         if not animated:
+            panel.setGraphicsEffect(None)
             panel.setVisible(visible)
             panel.setMaximumHeight(target_height)
             return
+
+        effect = panel.graphicsEffect()
+        if not isinstance(effect, QGraphicsOpacityEffect):
+            effect = QGraphicsOpacityEffect(panel)
+            panel.setGraphicsEffect(effect)
+
+        start_opacity = effect.opacity() if not panel.isHidden() else 0.0
         if visible:
+            if panel.isHidden():
+                effect.setOpacity(0.0)  # 避免动画首帧前闪出一帧不透明画面
             panel.setVisible(True)
+            panel.setMaximumHeight(target_height)
 
-        height_anim = QPropertyAnimation(panel, b"maximumHeight", self)
-        height_anim.setDuration(160)
-        height_anim.setStartValue(panel.maximumHeight())
-        height_anim.setEndValue(target_height)
-        height_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-
-        group = QParallelAnimationGroup(self)
-        group.addAnimation(height_anim)
+        fade = QPropertyAnimation(effect, b"opacity", self)
+        fade.setDuration(130 if visible else 100)
+        fade.setStartValue(start_opacity)
+        fade.setEndValue(1.0 if visible else 0.0)
+        fade.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         def _cleanup() -> None:
+            effect.setOpacity(1.0)
+            panel.setGraphicsEffect(None)
             panel.setVisible(visible)
             panel.setMaximumHeight(target_height)
-            self._rectangle_options_animation = None
+            setattr(self, anim_attr, None)
 
-        group.finished.connect(_cleanup)
-        self._rectangle_options_animation = group
-        group.start()
+        fade.finished.connect(_cleanup)
+        setattr(self, anim_attr, fade)
+        fade.start()
 
     def _update_rectangle_color_swatch(self) -> None:
         # 背景色是运行时动态颜色，无法使用静态资产：按颜色哈希现场渲染 squircle
