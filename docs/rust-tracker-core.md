@@ -1,8 +1,8 @@
 # omintrack Rust 跟踪核心 设计文档
 
-> **版本**：1.1 — 2026-11-22
-> **范围**：新增 `rust/omintrack/`（PyO3 cdylib）、`ai/tracker_backend.py`（适配层）、`ai/tracker.py` 后端开关、32 项专项测试与性能基准；1.1 追加 `rust/omintrack/src/py_api.rs` 外观数组 FFI 零拷贝优化（`Cargo.toml` 增 numpy crate 依赖）
-> **状态**：1.0 已合入 main（PR #2 → `3243016`）；1.1 外观数组 FFI 零拷贝优化已合入 main（PR #7 → `3ee6a61`）；cargo check / maturin 重建 / 32 项专项 + 全套件 1341 项全绿
+> **版本**：1.2 — 2026-11-22
+> **范围**：新增 `rust/omintrack/`（PyO3 cdylib）、`ai/tracker_backend.py`（适配层）、`ai/tracker.py` 后端开关、32 项专项测试与性能基准；1.1 追加 `rust/omintrack/src/py_api.rs` 外观数组 FFI 零拷贝优化（`Cargo.toml` 增 numpy crate 依赖）；1.2 追加 ReID mock 止损门控约定（仅 Python 侧 tracker.py / tracker_backend.py 门控条件变更，Rust core 不变，见 §3.2）
+> **状态**：1.0 已合入 main（PR #2 → `3243016`）；1.1 外观数组 FFI 零拷贝优化已合入 main（PR #7 → `3ee6a61`）；1.2 状态：⏳ 待合并（本次变更不触碰 Rust 文件，1.0/1.1 合入状态不变）。cargo check / maturin 重建 / 32 项专项 + 全套件 1350 项全绿
 
 ---
 
@@ -76,7 +76,7 @@ rust/omintrack/src/
 - **级联 Stage 1 quirk**：Python 版 `_match_cascade` 注释写"Stage 1 高置信度检测"，但实现传入**全部**检测（`high_indices` 计算后从未使用）。Rust 版**照搬此 quirk**（`match_cascade` 中 `_high` 同理占位）。修正它属于行为变更，必须双侧同步并更新 golden；
 - 生命周期：新检测立即建轨（hits=1，无 tentative 期）；`misses > max_misses`（默认 4，即第 5 次 miss）删除；
 - EMA 顺序与系数：correct → box EMA(α=0.85) → confidence 0.7/0.3 → keypoints（x/y 用 α、conf 用 0.7/0.3）→ 空关键点按 bbox warp → polygon EMA；`prev_box` 在 EMA 之后保存；
-- 匹配代价：匈牙利 0.85·IoU + 0.10·center + 0.05·appearance（ReID 激活且双侧 embedding 存在时 0.4/0.4/0.2）；门控回退 IoU>0.05 且中心距<0.5·avg_size；无效匹配 cost≥0.999 丢弃；greedy 的 appearance 权重 0.15；
+- 匹配代价：匈牙利 0.85·IoU + 0.10·center + 0.05·appearance（ReID 激活且双侧 embedding 存在时 0.4/0.4/0.2；ReID 激活另需 backend 非 mock：is_mock=False，门控在 Python 侧双實施行并使用 getattr 默认 False 兼容自定义 backend，见 [reid-osnet-backend](reid-osnet-backend.md) §3）；门控回退 IoU>0.05 且中心距<0.5·avg_size；无效匹配 cost≥0.999 丢弃；greedy 的 appearance 权重 0.15；
 - 重检测：仅 label=="person"、按 misses 降序、每帧最多 `redetect_budget` 个；refined box 与预测框 IoU≥0.20 才算成功；超预算只 miss+1 不累加 attempts；
 - AUTO 适配器：EVAL_INTERVAL=30、NIS>8.0、P 条件数>1000、miss 率>0.5、Cholesky 失败>2、hysteresis=2 次投票才切换；
 - 匈牙利确定性：矩形代价补零成方阵，与 scipy `linear_sum_assignment` 数学等价；tie-break 行优先、严格小于才更新；

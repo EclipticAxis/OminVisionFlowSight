@@ -60,6 +60,7 @@ class SettingsDialog(QDialog):
     _KEY_AI_REID_ENABLED = "ai/reid_enabled"
     _KEY_AI_REID_MIN_TRACKS = "ai/reid_min_tracks"
     _KEY_AI_REID_STRIDE = "ai/reid_stride"
+    _KEY_AI_REID_MODEL_PATH = "ai/reid_model_path"
     _KEY_AI_HEAD_CLASSIFIER_ENABLED = "ai/head_classifier_enabled"
     _KEY_AI_HEAD_CLASSIFIER_PATH = "ai/head_classifier_path"
     _KEY_AI_HEAD_CLASSIFIER_STRIDE = "ai/head_classifier_stride"
@@ -85,6 +86,7 @@ class SettingsDialog(QDialog):
     _RECOMMENDED_REID_ENABLED = False
     _RECOMMENDED_REID_MIN_TRACKS = 3
     _RECOMMENDED_REID_STRIDE = 3
+    _RECOMMENDED_REID_MODEL_PATH = ""
     _RECOMMENDED_HEAD_CLASSIFIER_ENABLED = False
     _RECOMMENDED_HEAD_CLASSIFIER_STRIDE = 2
     _DEFAULT_CONF = _RECOMMENDED_CONF
@@ -119,6 +121,7 @@ class SettingsDialog(QDialog):
         self._ai_reid_min_tracks = self.load_ai_reid_min_tracks()
         self._ai_reid_stride = self.load_ai_reid_stride()
         self._ai_model_path = self.load_ai_model_path()
+        self._ai_reid_model_path = self.load_ai_reid_model_path()
         self._ai_head_classifier_enabled = self.load_ai_head_classifier_enabled()
         self._ai_head_classifier_path = self.load_ai_head_classifier_path()
         self._ai_head_classifier_stride = self.load_ai_head_classifier_stride()
@@ -239,6 +242,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(self._create_separator())
         layout.addLayout(self._create_model_row())
         layout.addLayout(self._create_head_classifier_row())
+        layout.addLayout(self._create_reid_model_row())
 
         layout.addSpacing(6)
         layout.addWidget(self._create_version_info())
@@ -402,6 +406,60 @@ class SettingsDialog(QDialog):
                 self._head_classifier_combo.addItem(Path(file_path).name, file_path)
                 index = self._head_classifier_combo.findData(file_path)
             self._head_classifier_combo.setCurrentIndex(index)
+
+    def _create_reid_model_row(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(8)
+
+        lbl = QLabel("ReID 模型")
+        lbl.setStyleSheet(f"color: {C['TEXT_SECONDARY']}; font-size: 9pt;")
+        lbl.setFixedWidth(100)
+        row.addWidget(lbl)
+
+        self._reid_model_combo = WheelFocusComboBox()
+        self._reid_model_combo.setFixedHeight(36)
+        self._reid_model_combo.addItem("关闭", "")
+        self._reid_model_combo.setToolTip(
+            "OSNet 行人重识别模型（osnet*.onnx）：匹配外观加权；关闭时不启用 ReID"
+        )
+        for path in self._discover_reid_model_paths():
+            self._reid_model_combo.addItem(path.name, str(path))
+
+        if self._ai_reid_model_path:
+            index = self._reid_model_combo.findData(self._ai_reid_model_path)
+            if index < 0:
+                self._reid_model_combo.addItem(Path(self._ai_reid_model_path).name, self._ai_reid_model_path)
+                index = self._reid_model_combo.findData(self._ai_reid_model_path)
+            self._reid_model_combo.setCurrentIndex(index)
+        row.addWidget(self._reid_model_combo, stretch=1)
+
+        browse_btn = QPushButton("浏览...")
+        browse_btn.setFixedWidth(80)
+        browse_btn.setFixedHeight(36)
+        browse_btn.clicked.connect(self._on_browse_reid_model)
+        row.addWidget(browse_btn)
+        return row
+
+    @staticmethod
+    def _discover_reid_model_paths() -> list[Path]:
+        models_dir = Path.cwd() / "models"
+        if not models_dir.exists():
+            return []
+        return sorted(models_dir.glob("osnet*.onnx"), key=lambda p: p.name.lower())
+
+    def _on_browse_reid_model(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择 ReID 模型",
+            str(Path.cwd() / "models"),
+            "OSNet Models (osnet*.onnx);;ONNX Models (*.onnx);;All Files (*)",
+        )
+        if file_path:
+            index = self._reid_model_combo.findData(file_path)
+            if index < 0:
+                self._reid_model_combo.addItem(Path(file_path).name, file_path)
+                index = self._reid_model_combo.findData(file_path)
+            self._reid_model_combo.setCurrentIndex(index)
 
     def _create_filter_type_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -661,6 +719,9 @@ class SettingsDialog(QDialog):
             self._denoise_combo.currentData() or "none",
             self._denoise_strength_spin.value(),
         )
+        self._save_reid_model_settings(
+            self._reid_model_combo.currentData() or "",
+        )
         self._save_head_classifier_settings(
             bool(self._head_classifier_combo.currentData()),
             self._head_classifier_combo.currentData() or "",
@@ -715,6 +776,7 @@ class SettingsDialog(QDialog):
             "redetect_budget": int(self._redetect_budget_spin.value()),
             "reid_min_tracks": int(self._reid_min_tracks_spin.value()),
             "reid_stride": int(self._reid_stride_spin.value()),
+            "reid_model_path": self._reid_model_combo.currentData() or "",
             "head_classifier_enabled": bool(self._head_classifier_combo.currentData()),
             "head_classifier_path": self._head_classifier_combo.currentData() or "",
             "head_classifier_stride": int(self._head_classifier_stride_spin.value()),
@@ -783,6 +845,17 @@ class SettingsDialog(QDialog):
         logging.info(
             "SettingsDialog: saved head classifier enabled=%s path=%s stride=%d",
             enabled, model_path or "<auto>", stride,
+        )
+
+    def _save_reid_model_settings(
+        self,
+        model_path: str,
+    ) -> None:
+        settings = QSettings(self._SETTINGS_ORG, self._SETTINGS_APP)
+        settings.setValue(self._KEY_AI_REID_MODEL_PATH, str(model_path or ""))
+        logging.info(
+            "SettingsDialog: saved reid model path = %s",
+            model_path or "<off>",
         )
 
     @staticmethod
@@ -966,6 +1039,12 @@ class SettingsDialog(QDialog):
             return max(1, min(10, int(val)))
         except Exception:
             return SettingsDialog._RECOMMENDED_REID_STRIDE
+
+    @staticmethod
+    def load_ai_reid_model_path() -> str:
+        settings = QSettings(SettingsDialog._SETTINGS_ORG, SettingsDialog._SETTINGS_APP)
+        val = settings.value(SettingsDialog._KEY_AI_REID_MODEL_PATH, SettingsDialog._RECOMMENDED_REID_MODEL_PATH)
+        return str(val or "")
 
     @staticmethod
     def load_ai_head_classifier_enabled() -> bool:
