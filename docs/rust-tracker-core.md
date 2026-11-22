@@ -2,7 +2,7 @@
 
 > **版本**：1.3 — 2026-11-22
 > **范围**：新增 `rust/omintrack/`（PyO3 cdylib）、`ai/tracker_backend.py`（适配层）、`ai/tracker.py` 后端开关、32 项专项测试与性能基准；1.1 追加 `rust/omintrack/src/py_api.rs` 外观数组 FFI 零拷贝优化（`Cargo.toml` 增 numpy crate 依赖）；1.2 追加 ReID mock 止损门控约定（仅 Python 侧 tracker.py / tracker_backend.py 门控条件变更，Rust core 不变，见 §3.2）；1.3 跟踪后端缺省 "python" → "auto"（构造时 import omintrack 探测，ImportError/OSError 回退 Python；显式 "rust" 仍抛错不回退），GUI 配置链见 [default-backends](default-backends.md)
-> **状态**：1.0 已合入 main（PR #2 → `3243016`）；1.1 外观数组 FFI 零拷贝优化已合入 main（PR #7 → `3ee6a61`）；1.2 ReID mock 止损门控已合入 main（PR #8 → `1e636e8`，未触碰 Rust 文件）。cargo check / maturin 重建 / 32 项专项 + 全套件 1350 项全绿；1.3 auto 默认（待合并：新增 tests/test_default_backends.py 16 项，全套件全绿）
+> **状态**：1.0 已合入 main（PR #2 → `3243016`）；1.1 外观数组 FFI 零拷贝优化已合入 main（PR #7 → `3ee6a61`）；1.2 ReID mock 止损门控已合入 main（PR #8 → `1e636e8`，未触碰 Rust 文件）。cargo check / maturin 重建 / 32 项专项 + 全套件 1350 项全绿；1.3 auto 默认已合入 main（PR #9 → `7f78651`；新增 tests/test_default_backends.py 16 项，全套件 1366 项全绿）
 
 ---
 

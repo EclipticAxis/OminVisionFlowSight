@@ -896,7 +896,7 @@ MainWindow.closeEvent()
 | 2026-11-22 | 侧栏 AI 子选项面板动画性能修复（[设计](docs/sidebar-options-animation.md)：瞬时几何 + 淡入替代逐帧高度动画、滚动条常驻消抖、目标状态 no-op 守卫；新增 5 项契约测试含陈旧钳制挤压回归） | ✅ PR #6 → `4111e24` |
 | 2026-11-22 | omintrack 外观数组 FFI 零拷贝优化（py_api 多路径提取 ndarray f64/f32 + list 回退，core 不变；[设计](docs/rust-tracker-core.md) §5.4） | ✅ PR #7 → `3ee6a61` |
 | 2026-11-22 | 接入真实 OSNet ReID 模型 + mock 止损门控（[设计](docs/reid-osnet-backend.md) 1.0：预处理契约 256×128 ImageNet 归一化→512 维自适应、推理异常返回 None 不回退 mock、tracker 双侧 is_mock 门控、GUI 配置链 QSettings `ai/reid_model_path`；新增 9 项测试，全套件 1350 项全绿） | ✅ PR #8 → `1e636e8` |
-| 2026-11-22 | 默认行为变更：跟踪后端 auto 默认 + ReID 默认启用（[设计](docs/default-backends.md) 1.0：backend 缺省 python→auto 含 OSError 回退、GUI `ai/tracker_backend` 键与 Rust 项 find_spec 门控、ReID 三态默认加载尊重主动关闭、推荐恢复=随仓库模型；既有测试 Python 对拍侧显式 `backend="python"` 适配，新增 16 项） | ⏳ 待合并 |
+| 2026-11-22 | 默认行为变更：跟踪后端 auto 默认 + ReID 默认启用（[设计](docs/default-backends.md) 1.0：backend 缺省 python→auto 含 OSError 回退、GUI `ai/tracker_backend` 键与 Rust 项 find_spec 门控、ReID 三态默认加载尊重主动关闭、推荐恢复=随仓库模型；既有测试 Python 对拍侧显式 `backend="python"` 适配，新增 16 项） | ✅ PR #9 → `7f78651` |
 
 ### 11.3 已知问题
 
