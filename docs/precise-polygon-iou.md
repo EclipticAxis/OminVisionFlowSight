@@ -2,7 +2,7 @@
 
 > **版本**：1.0 — 2026-11-22
 > **范围**：`ai/detection.py`（`polygon_iou` 及辅助函数）、`rust/omintrack/src/geometry.rs` + `lib.rs`（新增 `_polygon_iou` 测试辅助）、新增 `tests/test_polygon_iou_precise.py`
-> **状态**：⏳ 待合并
+> **状态**：已合入 main（PR #14 → `e43c46c`）；新增 13 项测试，全套件 1391 项全绿
 > **关联**：[rust-tracker-core](rust-tracker-core.md) §3.2 匹配代价契约、§3.3 修改契约
 
 ---
