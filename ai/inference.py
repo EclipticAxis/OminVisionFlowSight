@@ -799,6 +799,8 @@ class InferWorker(QThread):
                 from ai.reid_backend import ReIDBackend
                 self._reid_backend = ReIDBackend(model_path)
                 logging.info("ReID backend loaded: mock=%s", self._reid_backend._mock)
+            if getattr(self._reid_backend, "is_mock", False):
+                logging.warning("ReID backend 为 mock 模式：ReID 匹配不会激活")
         else:
             self._reid_backend = None
         # 更新已有 tracker

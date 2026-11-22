@@ -1240,10 +1240,12 @@ class MainWindow(QMainWindow):
         # 透传重检测预算和 ReID 配置
         self._infer_worker.set_redetect_budget(int(cfg.get("redetect_budget", 1)))
         reid_min = int(cfg.get("reid_min_tracks", 3))
+        # ReID 仅在配置模型路径且 min_tracks>0 时启用（"关闭"= 空路径）
         self._infer_worker.set_reid_config(
-            enabled=reid_min > 0,
+            enabled=bool(cfg.get("reid_model_path")) and reid_min > 0,
             min_tracks=reid_min,
             stride=int(cfg.get("reid_stride", 3)),
+            model_path=cfg.get("reid_model_path") or None,
         )
 
         # 透传头部属性分类器配置

@@ -93,7 +93,10 @@ class RustDetectionTracker:
                 if det.get("label") == "person":
                     det_hist[i] = self._compute_color_hist_for_box(frame, det)
 
-            if self._reid_backend is not None:
+            # mock 止损门控：mock backend 注入的是无语义噪声，ReID 匹配不得激活
+            # （getattr 默认 False 兼容无 is_mock 属性的自定义 backend，如测试 fake）
+            if self._reid_backend is not None \
+                    and not getattr(self._reid_backend, "is_mock", False):
                 person_count = sum(1 for d in detections if d.get("label") == "person")
                 track_person_count = self._core.person_track_count()
                 if person_count >= 1 and track_person_count >= self._reid_min_tracks \
