@@ -244,11 +244,11 @@ class MainWindow(QMainWindow):
         self._flip_toggle.toggled.connect(self._on_flip_toggled)
         layout.addWidget(self._flip_toggle)
 
-        # 设置入口：具体内容暂不确定，先预留按钮与回调骨架
+        # 设置入口：弹出 SettingsDialog（AI 模型 / 相机 / 跟踪等参数配置）
         self._settings_btn = QPushButton("设置")
         self._settings_btn.setObjectName("topBarSettings")
         self._settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._settings_btn.setToolTip("设置（即将上线）")
+        self._settings_btn.setToolTip("AI 模型 / 相机 / 跟踪参数设置")
         self._settings_btn.clicked.connect(self._on_open_settings)
         layout.addWidget(self._settings_btn)
 
