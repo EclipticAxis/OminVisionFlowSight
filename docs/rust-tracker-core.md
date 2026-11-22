@@ -1,8 +1,8 @@
 # omintrack Rust 跟踪核心 设计文档
 
-> **版本**：1.0 — 2026-11-18
-> **范围**：新增 `rust/omintrack/`（PyO3 cdylib）、`ai/tracker_backend.py`（适配层）、`ai/tracker.py` 后端开关、32 项专项测试与性能基准
-> **状态**：已合入 main（PR #2 → `3243016`）；18 项等价性 + 13 场景快照测试全部通过；全套件 1277 通过；基准平均 ~37x 加速
+> **版本**：1.1 — 2026-11-22
+> **范围**：新增 `rust/omintrack/`（PyO3 cdylib）、`ai/tracker_backend.py`（适配层）、`ai/tracker.py` 后端开关、32 项专项测试与性能基准；1.1 追加 `rust/omintrack/src/py_api.rs` 外观数组 FFI 零拷贝优化（`Cargo.toml` 增 numpy crate 依赖）
+> **状态**：1.0 已合入 main（PR #2 → `3243016`）；1.1 外观数组 FFI 零拷贝优化**待合并**，已实现并通过 cargo check / maturin 重建 / 32 项专项 + 全套件 1341 项全绿
 
 ---
 
@@ -57,6 +57,7 @@ rust/omintrack/src/
 ### 2.3 FFI 边界
 
 - 输入：检测 dict（`x1/y1/x2/y2/confidence/label`，可选 `polygon/keypoints`）+ `det_hist` / `det_emb` / `reid_active` / `redetect_callback`；
+- 外观数组输入（v1.1 起）：`det_hist` / `det_emb` 元素与 `update_color_hists` 的 value 支持 NumPy ndarray（float64/float32）零拷贝快路径——`numpy::PyArray1` 直接读底层 buffer，float32 经 `f64::from` 无损 widening；非 contiguous 数组走 `as_array()` 逐元素兜底；非 ndarray 对象回退 list 兼容旧路径（`extract::<Vec<f64>>`）。FFI 形参类型为 `PyObject`，转换后仍以 `Vec<Option<Vec<f64>>>` 传入 core，`tracker.rs` / `filters.rs` 签名与实现完全不变；
 - 输出：track dict（键与 `_Track.to_dict()` 完全一致）；
 - 错误语义：解析错误 → KeyError/TypeError；UKF 创新协方差 S 奇异 → **RuntimeError**（不 panic）；redetect 回调抛出的 Python 异常被吞掉并按"重检测失败"处理（与 Python 版 try/except 一致）。
 
@@ -133,9 +134,17 @@ tracker = DetectionTracker(backend="rust")   # 显式指定
 
 `benchmark/benchmark_tracker_rust.py`：20 tracks × 500 帧（~18.6 检测/帧），3 滤波器 × 3 策略；当前实测均值 ~37x（ukf+hungarian 最快 ~60x，manifold_ukf 最慢 ~18x）。
 
+### 5.4 外观数组 FFI 零拷贝优化（v1.1，2026-11-22）
+
+**动机**：生产路径 Python 侧传入 NumPy ndarray（hist 为 float32 520 维、emb 256 维），但旧版 pyo3 形参是 `Vec<f64>`，触发迭代器慢路径逐元素构造 PyFloat；实测每帧 20 检测仅外观提取浪费 ~159µs（比核心计算 63µs 还贵），单帧 update 端到端 ~249µs。
+
+**方案**：`py_api.rs` 边界做向后兼容的多路径提取（`extract_f64_vector`）：ndarray f64/f32 零拷贝 → f32 逐元素 `f64::from` 无损转换 → list 兼容回退。core 与 Python facade、测试一律不改。
+
+**实测（本机，20 tracks 稳定态，20 检测 × 520 维 hist，同一微基准脚本前后对照）**：`update` 端到端（ndarray hist）**249µs → 66µs/帧**，外观提取开销由 +186µs 降至 +4µs（f64）/ +10µs（f32，含 widening）；list 回退路径保持 +28µs 不变；`update_color_hists` ndarray 路径 5.9µs vs list 28.3µs（~4.8x）。行为等价性由 §5.1 / §5.2 原有用例回归保证（f32→f64 widening 与旧路径逐位一致），全套件 1341 项通过。
+
 ## 6. 维护指南
 
 - 改算法先读 §3.2 契约表，判断是否触碰 quirk 依赖点；
-- Rust 侧保持零 unsafe；新增依赖需评估（当前仅 pyo3 + nalgebra）；
+- Rust 侧保持零 unsafe；新增依赖需评估（当前 pyo3 0.22 + numpy 0.22 + nalgebra 0.32；numpy crate 与 pyo3 版本配套，升级 pyo3 时必须同步核对）；
 - 不要把帧相关计算（cv2/模型）移入 Rust——FFI 边界是有意划分；
 - 提交前：`cargo check` 零警告 + maturin 重建 + 全套件通过。

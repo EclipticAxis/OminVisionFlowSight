@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
+use numpy::{PyArray1, PyArrayMethods};
+
 use crate::tracker::{
     DetInput, Keypoint, RedetectCtx, TrackSnapshot, TrackerCore,
     TrackerParams,
@@ -50,6 +52,29 @@ fn get_f64(hm: &HashMap<String, PyObject>, key: &str, py: Python<'_>) -> PyResul
     hm.get(key)
         .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(format!("detection missing '{key}'")))?
         .extract(py)
+}
+
+/// 从 Python 对象提取 f64 向量：ndarray(f64/f32) 零拷贝快路径，list 回退兼容。
+///
+/// 生产路径传入 NumPy ndarray（hist float32 520 维 / emb 256 维），
+/// 逐元素构造 PyFloat 的 list 慢路径每帧 ~159µs，快路径直接读底层 buffer。
+/// f32 -> f64 用 `f64::from` 无损 widening，与旧行为逐位一致。
+fn extract_f64_vector(obj: &Bound<'_, PyAny>) -> PyResult<Vec<f64>> {
+    if let Ok(arr) = obj.downcast::<PyArray1<f64>>() {
+        let arr = arr.readonly();
+        if let Ok(slice) = arr.as_slice() {
+            return Ok(slice.to_vec());
+        }
+        return Ok(arr.as_array().iter().copied().collect());
+    }
+    if let Ok(arr) = obj.downcast::<PyArray1<f32>>() {
+        let arr = arr.readonly();
+        if let Ok(slice) = arr.as_slice() {
+            return Ok(slice.iter().map(|&v| f64::from(v)).collect());
+        }
+        return Ok(arr.as_array().iter().map(|&v| f64::from(v)).collect());
+    }
+    obj.extract::<Vec<f64>>()
 }
 
 fn parse_det(hm: &HashMap<String, PyObject>, py: Python<'_>) -> PyResult<DetInput> {
@@ -199,8 +224,8 @@ impl RustTracker {
         &mut self,
         py: Python<'_>,
         detections: Vec<HashMap<String, PyObject>>,
-        det_hist: Option<Vec<Option<Vec<f64>>>>,
-        det_emb: Option<Vec<Option<Vec<f64>>>>,
+        det_hist: Option<Vec<Option<PyObject>>>,
+        det_emb: Option<Vec<Option<PyObject>>>,
         reid_active: bool,
         redetect_callback: Option<PyObject>,
     ) -> PyResult<Vec<HashMap<String, PyObject>>> {
@@ -209,10 +234,21 @@ impl RustTracker {
             .iter()
             .map(|d| parse_det(d, py))
             .collect::<PyResult<_>>()?;
+        // 外观数组在 FFI 边界用零拷贝/兼容多路径提取，core 入参仍是 Vec<Option<Vec<f64>>>
         let empty_hist: Vec<Option<Vec<f64>>> = vec![None; n];
         let empty_emb: Vec<Option<Vec<f64>>> = vec![None; n];
-        let det_hist = det_hist.as_deref().unwrap_or(&empty_hist);
-        let det_emb = det_emb.as_deref().unwrap_or(&empty_emb);
+        let extract_vecs =
+            |v: Vec<Option<PyObject>>| -> PyResult<Vec<Option<Vec<f64>>>> {
+                v.into_iter()
+                    .map(|o| o.map(|o| extract_f64_vector(o.bind(py))).transpose())
+                    .collect()
+            };
+        let det_hist_owned: Option<Vec<Option<Vec<f64>>>> =
+            det_hist.map(extract_vecs).transpose()?;
+        let det_emb_owned: Option<Vec<Option<Vec<f64>>>> =
+            det_emb.map(extract_vecs).transpose()?;
+        let det_hist = det_hist_owned.as_deref().unwrap_or(&empty_hist);
+        let det_emb = det_emb_owned.as_deref().unwrap_or(&empty_emb);
 
         let mut cb_holder;
         let mut null_ctx = NullCtx;
@@ -295,9 +331,17 @@ impl RustTracker {
     }
 
     /// 写回外部预计算的 HSV 颜色直方图（facade 用；misses>0 的 track 防御性跳过）。
-    fn update_color_hists(&mut self, hists: HashMap<i64, Vec<f64>>) {
-        let pairs: Vec<(i64, Vec<f64>)> = hists.into_iter().collect();
+    fn update_color_hists(
+        &mut self,
+        py: Python<'_>,
+        hists: HashMap<i64, PyObject>,
+    ) -> PyResult<()> {
+        let pairs: Vec<(i64, Vec<f64>)> = hists
+            .into_iter()
+            .map(|(tid, obj)| extract_f64_vector(obj.bind(py)).map(|v| (tid, v)))
+            .collect::<PyResult<_>>()?;
         self.core.update_color_hists(&pairs);
+        Ok(())
     }
 
     fn track_count(&self) -> usize {

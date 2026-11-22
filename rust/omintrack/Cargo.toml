@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.22", features = ["extension-module"] }
+numpy = "0.22" # 与 pyo3 0.22 配套，外观数组 FFI 零拷贝快路径
 nalgebra = { version = "0.32", default-features = false, features = ["std"] }
 
 [profile.release]
