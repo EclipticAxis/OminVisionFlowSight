@@ -1231,7 +1231,7 @@ class InferWorker(QThread):
             model = UhdBackend(model_path, provider_mode=self._backend_mode)
         else:
             provider_mode = "cpu" if self._backend_mode == "cpu" else "directml"
-            task = ModelTask.DETECT
+            task = _infer_model_task_from_path(model_path)
             model = OnnxYoloBackend(model_path, task=task, provider_mode=provider_mode, imgsz=self._model_imgsz)
         self._detect_model = model
         self._detect_model_path = model_path
