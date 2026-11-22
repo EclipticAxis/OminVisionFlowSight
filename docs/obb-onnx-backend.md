@@ -2,7 +2,7 @@
 
 > **版本**：1.0 — 2026-11-22
 > **范围**：`ai/onnx_yolo_backend.py`（OBB 解码 + BGR→RGB 预处理修正）、`ai/inference.py`（`_load_onnx_detect_model` 任务推断接通）、`tests/test_obb_onnx.py`（新增 12 项）、`models/yolo26n-obb.onnx`（随仓库分发，9.5MB，opset 18，simplify=False）
-> **状态**：⏳ 待合并（本地 `tests/test_obb_onnx.py` 12 项通过；全套件 1378 项全绿 = 1366 既有 + 12 新增）
+> **状态**：已合入 main（PR #10 → `95f9ac9`）；`tests/test_obb_onnx.py` 12 项通过；全套件 1378 项全绿 = 1366 既有 + 12 新增
 
 ---
 
