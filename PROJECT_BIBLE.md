@@ -891,6 +891,7 @@ MainWindow.closeEvent()
 | 2026-11-20 | InferWorker 核心 Pipeline 接缝对齐（[设计](docs/inferworker-pipeline-parity.md) 0.2.0：生产 schema 统一、扩展字段无损往返、redetect 单点回调工厂、TargetManager 按帧单写；8 scenario × Legacy/Pipeline 双模式对拍 + run 级单写证明转绿，专项 149 项通过） | ✅ PR #4 → `b4286d3` |
 | 2026-11-20 | InferWorker 共享后处理抽取 + run 级双槽位 slot 信号契约（[设计](docs/inferworker-pipeline-parity.md) 0.3.0：Legacy/Pipeline 后处理链合并为单一 `_postprocess_slot_detections`，行为与文案差异契约化；`detection_ready` 首参数 slot_id 双模式 run 级锁定；对拍专项 70 项、含 Pipeline/core 扩展命令 157 项通过） | ✅ PR #4 → `b4286d3` |
 | 2026-11-20 | InferWorker Pipeline runtime 复用与生命周期收口（[设计](docs/inferworker-pipeline-parity.md) 0.4.0：每 slot 懒创建并复用已 initialize 的 `_SlotPipelineRuntime`，Legacy 零 runtime；redetect 回调逐帧重设、异常 runtime 淘汰重建、运行中 unregister 走 retirement 由 run 循环清理、stop 批量至多一次 shutdown；新增 11 项生命周期测试，五文件专项 137 项、含 Pipeline/core 扩展命令 168 项、全套件 1336 项通过） | ✅ PR #4 → `b4286d3` |
+| 2026-11-22 | 侧栏 AI 子选项面板动画性能修复（[设计](docs/sidebar-options-animation.md)：瞬时几何 + 淡入替代逐帧高度动画、滚动条常驻消抖、目标状态 no-op 守卫；新增 5 项契约测试含陈旧钳制挤压回归） | ✅（待 PR 合入后回改） |
 
 ### 11.3 已知问题
 
@@ -920,7 +921,7 @@ MainWindow.closeEvent()
 
 | 问题 | 说明 |
 |------|------|
-| **无集成测试** | 无端到端测试验证采集→推理→显示的完整链路；生产 InferWorker 帧处理契约已有 Legacy 基线 + Legacy↔Pipeline 双模式对拍锁定（[parity](docs/inferworker-pipeline-parity.md) 0.3.0：共享后处理 `_postprocess_slot_detections` 单点实现、TargetManager 单写、双槽位 slot_id 信号 run 级证明），但采集→推理→显示端到端测试仍缺失；Pipeline 实例复用与生命周期已收口（[parity](docs/inferworker-pipeline-parity.md) 0.4.0：每 slot 复用 `_SlotPipelineRuntime`）；全套件 1336 项通过（2026-11-20） |
+| **无集成测试** | 无端到端测试验证采集→推理→显示的完整链路；生产 InferWorker 帧处理契约已有 Legacy 基线 + Legacy↔Pipeline 双模式对拍锁定（[parity](docs/inferworker-pipeline-parity.md) 0.3.0：共享后处理 `_postprocess_slot_detections` 单点实现、TargetManager 单写、双槽位 slot_id 信号 run 级证明），但采集→推理→显示端到端测试仍缺失；Pipeline 实例复用与生命周期已收口（[parity](docs/inferworker-pipeline-parity.md) 0.4.0：每 slot 复用 `_SlotPipelineRuntime`）；全套件 1341 项通过（2026-11-22） |
 | **无性能回归测试** | A/B 测试协议已设计（`docs/performance-degradation-analysis.md` 4.2 节）但未自动化；跟踪器已有基准脚本（`benchmark/benchmark_tracker_rust.py`） |
 
 ### 12.3 文档层面
