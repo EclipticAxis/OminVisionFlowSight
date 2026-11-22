@@ -45,35 +45,106 @@ def _fallback_bbox_iou(a: list[tuple[float, float]], b: list[tuple[float, float]
     return inter / union if union > 1e-8 else 0.0
 
 
-def _shapely_iou(a: list[tuple[float, float]], b: list[tuple[float, float]]) -> float:
-    """使用 shapely 计算两个多边形的精确 IoU；失败时返回 None。"""
-    try:
-        from shapely.geometry import Polygon
-        from shapely.errors import TopologicalError
-        pa = Polygon(a)
-        pb = Polygon(b)
-        if not pa.is_valid:
-            pa = pa.buffer(0)
-        if not pb.is_valid:
-            pb = pb.buffer(0)
-        try:
-            inter = pa.intersection(pb).area
-        except TopologicalError:
-            inter = 0.0
-        union = pa.area + pb.area - inter
-        return inter / union if union > 1e-8 else 0.0
-    except Exception:
-        return None
+def _signed_area2(polygon: list[tuple[float, float]]) -> float:
+    """Shoelace 有向面积的两倍；正值 = 逆时针（CCW），负值 = 顺时针。"""
+    area = 0.0
+    n = len(polygon)
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i + 1) % n]
+        area += x1 * y2 - x2 * y1
+    return area
+
+
+def _ensure_ccw(polygon: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """统一顶点环绕方向为逆时针（CCW）；已 CCW 则原样返回。"""
+    if _signed_area2(polygon) < 0.0:
+        return list(reversed(polygon))
+    return list(polygon)
+
+
+def _line_intersection(
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    a: tuple[float, float],
+    b: tuple[float, float],
+) -> tuple[float, float]:
+    """线段 p1->p2 与直线 a->b 的交点（Sutherland-Hodgman 裁剪用）。"""
+    d1x = p2[0] - p1[0]
+    d1y = p2[1] - p1[1]
+    d2x = b[0] - a[0]
+    d2y = b[1] - a[1]
+    denom = d1x * d2y - d1y * d2x
+    if abs(denom) < 1e-12:
+        return p2
+    t = ((a[0] - p1[0]) * d2y - (a[1] - p1[1]) * d2x) / denom
+    return (p1[0] + t * d1x, p1[1] + t * d1y)
+
+
+def _clip_convex_ccw(
+    subject: list[tuple[float, float]],
+    clip: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    """Sutherland-Hodgman：凸多边形 subject 被凸 CCW 多边形 clip 逐边裁剪。
+
+    两多边形均须为凸且顶点 CCW 环绕；输出为交集多边形顶点（可能为空）。
+    """
+    output = list(subject)
+    n = len(clip)
+    for i in range(n):
+        if not output:
+            break
+        ax, ay = clip[i]
+        bx, by = clip[(i + 1) % n]
+        ex = bx - ax
+        ey = by - ay
+        input_list = output
+        output = []
+        prev = input_list[-1]
+        prev_in = ex * (prev[1] - ay) - ey * (prev[0] - ax) >= 0.0
+        for cur in input_list:
+            cur_in = ex * (cur[1] - ay) - ey * (cur[0] - ax) >= 0.0
+            if cur_in:
+                if not prev_in:
+                    output.append(_line_intersection(prev, cur, (ax, ay), (bx, by)))
+                output.append(cur)
+            elif prev_in:
+                output.append(_line_intersection(prev, cur, (ax, ay), (bx, by)))
+            prev = cur
+            prev_in = cur_in
+    return output
+
+
+def _precise_polygon_iou(a: list[tuple[float, float]], b: list[tuple[float, float]]) -> float:
+    """精确凸多边形 IoU：Sutherland-Hodgman 凸裁剪求交集 + shoelace 面积。
+
+    假定两多边形均为凸（OBB 四边形场景恒为凸）。双实现契约：
+    与 rust/omintrack/src/geometry.rs::precise_polygon_iou 逐行同算法，
+    union = area_a + area_b - inter；union <= 1e-8 返回 0.0。
+    不依赖 shapely。
+    """
+    pa = _ensure_ccw(a)
+    pb = _ensure_ccw(b)
+    area_a = _polygon_area(pa)
+    area_b = _polygon_area(pb)
+    inter_poly = _clip_convex_ccw(pa, pb)
+    inter = _polygon_area(inter_poly)
+    union = area_a + area_b - inter
+    return inter / union if union > 1e-8 else 0.0
 
 
 def polygon_iou(a: list[tuple[float, float]], b: list[tuple[float, float]]) -> float:
-    """计算两个多边形的 IoU，优先使用 shapely，不可用时退回到 bbox IoU。"""
+    """计算两个凸多边形的精确 IoU（Sutherland-Hodgman + shoelace）。
+
+    假定凸多边形（OBB 四边形场景恒为凸）；环绕方向自动归一。
+    自实现精确算法，不依赖 shapely；异常时兜底退回外接 bbox IoU。
+    """
     if not a or not b or len(a) < 3 or len(b) < 3:
         return 0.0
-    iou = _shapely_iou(a, b)
-    if iou is not None:
-        return iou
-    return _fallback_bbox_iou(a, b)
+    try:
+        return _precise_polygon_iou(a, b)
+    except Exception:
+        return _fallback_bbox_iou(a, b)
 
 
 def polygon_center(polygon: list[tuple[float, float]]) -> tuple[float, float]:

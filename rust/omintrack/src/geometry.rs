@@ -1,10 +1,11 @@
-//! 几何工具：box IoU / 多边形外接 bbox IoU / 多边形中心。
+//! 几何工具：box IoU / 精确凸多边形 IoU（Sutherland-Hodgman + shoelace）/ 中心。
 //!
-//! 等价性说明：Python 侧 `ai.detection.polygon_iou` 优先尝试 shapely，
-//! 运行环境无 shapely 时 `_shapely_iou` 返回 None，实际走 `_fallback_bbox_iou`
-//! 分支 —— 即"两个多边形顶点集的轴对齐外接矩形的 IoU"。
-//! 因此 Rust 直接实现外接 bbox IoU 与 Python 运行行为完全等价
-//! （若未来环境装了 shapely，两条路径才会出现语义分歧，届时需重评估）。
+//! 等价性说明：Python 侧 `ai.detection.polygon_iou` 自实现精确凸多边形
+//! IoU（Sutherland-Hodgman 裁剪 + shoelace 面积，不再依赖 shapely）。
+//! 本模块 `precise_polygon_iou` 与 Python `_precise_polygon_iou` 逐行同算法
+//! （同样的环绕方向归一、裁剪顺序与浮点运算次序），供双后端行为锁定。
+//! Python 侧精确实现的异常兜底 `_fallback_bbox_iou`（外接 bbox IoU）
+//! 仅存在于 Python，Rust 主路径不实现、不参与匹配语义。
 
 pub type BBox = [f64; 4];
 pub type Point = [f64; 2];
@@ -39,26 +40,100 @@ pub fn box_iou(a: &BBox, b: &BBox) -> f64 {
     }
 }
 
-/// 多边形顶点集的轴对齐外接 bbox IoU（对应 Python `_fallback_bbox_iou`）。
-pub fn polygon_bbox_iou(a: &[Point], b: &[Point]) -> f64 {
-    let (ax1, ay1, ax2, ay2) = poly_bounds(a);
-    let (bx1, by1, bx2, by2) = poly_bounds(b);
-    box_iou(&[ax1, ay1, ax2, ay2], &[bx1, by1, bx2, by2])
+/// Shoelace 有向面积的两倍；正值 = CCW，负值 = CW。
+fn signed_area2(p: &[Point]) -> f64 {
+    let n = p.len();
+    let mut area = 0.0;
+    for i in 0..n {
+        let (x1, y1) = (p[i][0], p[i][1]);
+        let (x2, y2) = (p[(i + 1) % n][0], p[(i + 1) % n][1]);
+        area += x1 * y2 - x2 * y1;
+    }
+    area
 }
 
-fn poly_bounds(p: &[Point]) -> (f64, f64, f64, f64) {
-    let mut x1 = f64::INFINITY;
-    let mut y1 = f64::INFINITY;
-    let mut x2 = f64::NEG_INFINITY;
-    let mut y2 = f64::NEG_INFINITY;
-    for pt in p {
-        x1 = x1.min(pt[0]);
-        y1 = y1.min(pt[1]);
-        x2 = x2.max(pt[0]);
-        y2 = y2.max(pt[1]);
+/// 统一顶点环绕方向为 CCW；已 CCW 则原样返回。
+fn ensure_ccw(p: &[Point]) -> Vec<Point> {
+    if signed_area2(p) < 0.0 {
+        p.iter().rev().copied().collect()
+    } else {
+        p.to_vec()
     }
-    (x1, y1, x2, y2)
 }
+
+/// Shoelace 多边形面积绝对值（少于 3 顶点为 0，对应 Python `_polygon_area`）。
+fn polygon_area(p: &[Point]) -> f64 {
+    if p.len() < 3 {
+        return 0.0;
+    }
+    signed_area2(p).abs() * 0.5
+}
+
+/// 线段 p1->p2 与直线 a->b 的交点（Sutherland-Hodgman 裁剪用）。
+fn line_intersection(p1: Point, p2: Point, a: Point, b: Point) -> Point {
+    let d1x = p2[0] - p1[0];
+    let d1y = p2[1] - p1[1];
+    let d2x = b[0] - a[0];
+    let d2y = b[1] - a[1];
+    let denom = d1x * d2y - d1y * d2x;
+    if denom.abs() < 1e-12 {
+        return p2;
+    }
+    let t = ((a[0] - p1[0]) * d2y - (a[1] - p1[1]) * d2x) / denom;
+    [p1[0] + t * d1x, p1[1] + t * d1y]
+}
+
+/// Sutherland-Hodgman：凸多边形 subject 被凸 CCW 多边形 clip 逐边裁剪。
+/// 与 Python `_clip_convex_ccw` 逐行同算法（同样的边序与浮点运算次序）。
+fn clip_convex_ccw(subject: &[Point], clip: &[Point]) -> Vec<Point> {
+    let mut output = subject.to_vec();
+    let n = clip.len();
+    for i in 0..n {
+        if output.is_empty() {
+            break;
+        }
+        let a = clip[i];
+        let b = clip[(i + 1) % n];
+        let ex = b[0] - a[0];
+        let ey = b[1] - a[1];
+        let input_list = output;
+        output = Vec::new();
+        let mut prev = *input_list.last().unwrap();
+        let mut prev_in = ex * (prev[1] - a[1]) - ey * (prev[0] - a[0]) >= 0.0;
+        for &cur in &input_list {
+            let cur_in = ex * (cur[1] - a[1]) - ey * (cur[0] - a[0]) >= 0.0;
+            if cur_in {
+                if !prev_in {
+                    output.push(line_intersection(prev, cur, a, b));
+                }
+                output.push(cur);
+            } else if prev_in {
+                output.push(line_intersection(prev, cur, a, b));
+            }
+            prev = cur;
+            prev_in = cur_in;
+        }
+    }
+    output
+}
+
+/// 精确凸多边形 IoU（对应 Python `_precise_polygon_iou`，逐行同算法）。
+/// union = area_a + area_b - inter；union <= 1e-8 返回 0.0。
+pub fn precise_polygon_iou(a: &[Point], b: &[Point]) -> f64 {
+    let pa = ensure_ccw(a);
+    let pb = ensure_ccw(b);
+    let area_a = polygon_area(&pa);
+    let area_b = polygon_area(&pb);
+    let inter_poly = clip_convex_ccw(&pa, &pb);
+    let inter = polygon_area(&inter_poly);
+    let union = area_a + area_b - inter;
+    if union > 1e-8 {
+        inter / union
+    } else {
+        0.0
+    }
+}
+
 
 /// 多边形中心 = 顶点平均值（对应 Python `polygon_center`）。
 pub fn polygon_center(p: &[Point]) -> (f64, f64) {
@@ -75,7 +150,7 @@ pub fn polygon_center(p: &[Point]) -> (f64, f64) {
     (cx / n, cy / n)
 }
 
-/// 有 polygon（均为 4 顶点）则走外接 bbox IoU，否则 bbox IoU（对应 `_shape_iou`）。
+/// 有 polygon（均为 4 顶点）则走精确凸多边形 IoU，否则 bbox IoU（对应 `_shape_iou`）。
 pub fn shape_iou(
     trk_box: &BBox,
     trk_polygon: Option<&Vec<Point>>,
@@ -84,7 +159,7 @@ pub fn shape_iou(
 ) -> f64 {
     if let (Some(tp), Some(dp)) = (trk_polygon, det_polygon) {
         if tp.len() == 4 && dp.len() == 4 {
-            return polygon_bbox_iou(tp, dp);
+            return precise_polygon_iou(tp, dp);
         }
     }
     box_iou(trk_box, det_box)

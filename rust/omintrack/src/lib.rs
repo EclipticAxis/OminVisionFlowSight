@@ -35,10 +35,20 @@ fn _hungarian_pairs(cost: Vec<Vec<f64>>) -> Vec<(usize, usize)> {
     hungarian::hungarian(&cost)
 }
 
+/// 测试辅助：精确凸多边形 IoU（对拍 Python `_precise_polygon_iou` 用，
+/// 语义与 `geometry::precise_polygon_iou` 完全一致）。
+#[pyfunction]
+fn _polygon_iou(a: Vec<Vec<f64>>, b: Vec<Vec<f64>>) -> f64 {
+    let pa: Vec<geometry::Point> = a.iter().map(|p| [p[0], p[1]]).collect();
+    let pb: Vec<geometry::Point> = b.iter().map(|p| [p[0], p[1]]).collect();
+    geometry::precise_polygon_iou(&pa, &pb)
+}
+
 #[pymodule]
 fn omintrack(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<py_api::RustTracker>()?;
     m.add_function(wrap_pyfunction!(_bhattacharyya_similarity, m)?)?;
     m.add_function(wrap_pyfunction!(_hungarian_pairs, m)?)?;
+    m.add_function(wrap_pyfunction!(_polygon_iou, m)?)?;
     Ok(())
 }
