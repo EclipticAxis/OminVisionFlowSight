@@ -21,8 +21,8 @@ import cv2
 from ai.detection import Detection, polygon_iou, polygon_center
 
 if TYPE_CHECKING:
-    # VisionCore 未来统一模型入口 —— 当前仅用于类型检查，不影响运行时。
-    # DetectionTracker 的运行逻辑保持不变；这些类型为未来迁移做准备。
+    # VisionCore 类型标注（仅 TYPE_CHECKING，不影响运行时）。
+    # 运行时接入见 Pipeline 模式（ai/pipeline_enabled）；DetectionTracker 运行逻辑不变。
     from visioncore.core import Detection as CoreDetection
     from visioncore.core import Track as CoreTrack
 
