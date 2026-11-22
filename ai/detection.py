@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 if TYPE_CHECKING:
-    # VisionCore 未来统一模型入口 —— 当前仅用于类型检查，不影响运行时。
-    # 适配器见 visioncore.core.adapters (to_core_detection / from_core_detection)。
+    # VisionCore 类型标注（仅 TYPE_CHECKING，不影响运行时）。
+    # 运行时接入见 Pipeline 模式（ai/pipeline_enabled）；适配器见 visioncore.core.adapters。
     from visioncore.core.detection import BBox as CoreBBox
     from visioncore.core.detection import Detection as CoreDetection
 
@@ -124,7 +124,7 @@ class Detection:
     - keypoints: 关键点列表，Pose 任务必填。
     - track_id / track_state: 由 Tracker 后续附加。
 
-    VisionCore 未来入口:
+    VisionCore 适配（现可用）:
         此类型可通过 visioncore.core.adapters.to_core_detection() 转换为
         visioncore.core.detection.Detection (不可变, frozen+slots)。
         反向转换使用 from_core_detection() / from_core_with_extras()。

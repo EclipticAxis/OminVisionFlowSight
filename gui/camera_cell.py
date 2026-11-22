@@ -16,8 +16,8 @@ from PyQt6.QtWidgets import QWidget
 from gui.squircle import squircle_path
 
 if TYPE_CHECKING:
-    # VisionCore 未来统一模型入口 —— 当前仅用于类型检查，不影响运行时。
-    # CameraCell 的绘制逻辑保持不变；这些类型为未来迁移做准备。
+    # VisionCore 类型标注（仅 TYPE_CHECKING，不影响运行时）。
+    # 运行时接入见 Pipeline 模式（ai/pipeline_enabled）；CameraCell 绘制逻辑不变。
     from visioncore.core import Detection as CoreDetection
     from visioncore.core import Frame as CoreFrame
 
@@ -382,7 +382,7 @@ class CameraCell(QWidget):
         return False
 
     def update_frame(self, slot_id: int, frame: np.ndarray) -> None:
-        # VisionCore 未来入口: frame 参数未来可标注为 CoreFrame
+        # VisionCore 迁移预留：frame 参数可标注为 CoreFrame
         if slot_id != self.slot_id:
             return
 
@@ -418,7 +418,7 @@ class CameraCell(QWidget):
             self.update()
 
     def update_detections(self, slot_id: int, detections: list[dict]) -> None:
-        # VisionCore 未来入口: detections 未来可标注为 list[CoreDetection]
+        # VisionCore 迁移预留：detections 可标注为 list[CoreDetection]
         if slot_id != self.slot_id:
             return
 

@@ -390,7 +390,7 @@ class _SlotPipelineRuntime:
 
 
 class InferWorker(QThread):
-    # VisionCore 未来入口: detection_ready 未来可发射 list[CoreDetection]，
+    # VisionCore 迁移预留：detection_ready 可发射 list[CoreDetection]（Pipeline 模式已运行 CoreFrame），
     # 通过 visioncore.core.adapters.to_core_detection() 转换。
 
     detection_ready = pyqtSignal(int, list)

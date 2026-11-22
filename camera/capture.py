@@ -8,13 +8,13 @@ import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal, QMutex
 
 if TYPE_CHECKING:
-    # VisionCore 未来统一模型入口 —— 当前仅用于类型检查，不影响运行时。
-    # SingleCameraWorker 的运行逻辑保持不变；Frame 为未来迁移做准备。
+    # VisionCore 类型标注（仅 TYPE_CHECKING，不影响运行时）。
+    # 运行时接入见 Pipeline 模式（ai/pipeline_enabled）；SingleCameraWorker 运行逻辑不变。
     from visioncore.core import Frame as CoreFrame
 
 
 class SingleCameraWorker(QThread):
-    frame_ready = pyqtSignal(int, object)  # VisionCore 未来入口: 未来可发射 CoreFrame
+    frame_ready = pyqtSignal(int, object)  # VisionCore 迁移预留：可发射 CoreFrame（Pipeline 已使用该类型）
     error_occurred = pyqtSignal(int, str)
 
     def __init__(self, slot_id: int, device_name: str, parent=None):

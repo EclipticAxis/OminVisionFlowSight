@@ -40,8 +40,8 @@ from gui.settings_dialog import SettingsDialog
 from gui.theme import RADIUS, SQ_TILE_PAD, SQ_TILE_SCALE, get_stylesheet, squircle_slice
 
 if TYPE_CHECKING:
-    # VisionCore 未来统一模型入口 —— 当前仅用于类型检查，不影响运行时。
-    # MainWindow 的运行逻辑保持不变；这些类型为未来迁移至 VisionCore 架构做准备。
+    # VisionCore 类型标注（仅 TYPE_CHECKING，不影响运行时）。
+    # 运行时接入见 Pipeline 模式（ai/pipeline_enabled）；MainWindow 运行逻辑不变。
     from visioncore.core import Detection as CoreDetection
     from visioncore.core import Event as CoreEvent
     from visioncore.core import Frame as CoreFrame
