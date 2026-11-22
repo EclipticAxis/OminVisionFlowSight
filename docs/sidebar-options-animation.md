@@ -2,7 +2,7 @@
 
 > **版本**：1.1.0（2026-11-22）
 > **范围**：`gui/main_window.py`（`_apply_options_panel_visibility`、`_build_control_panel`）、`tests/test_sidebar_options_animation.py`
-> **状态**：已合入本地分支 `codex/fix-sidebar-options-animation`（2026-11-22，待 PR 合入后回改）；专项 5 项通过，全套件 1341 项通过
+> **状态**：已合入 main（PR #6 → `4111e24`，2026-11-22）；专项 5 项通过，全套件 1341 项通过
 
 ## 1. 目标与背景
 
