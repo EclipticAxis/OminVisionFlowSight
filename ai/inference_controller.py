@@ -317,7 +317,7 @@ class InferWorker(QThread):
             self._gesture_mode = gesture_mode
 
     def set_denoise(self, method: str, strength: int = 5) -> None:
-        self._runtime_state.stats.set("denoise_method_hash", hash(method))
+        self._runtime_state.stats.set("denoise_method", method)  # 存原始配置值：str hash 跨进程不稳定且不可读
 
     def set_person_redetect(self, enabled: bool = True, max_retries: int = 2, roi_pad: float = 0.15) -> None:
         self._runtime_state.stats.set("redetect_enabled", int(enabled))
@@ -326,19 +326,19 @@ class InferWorker(QThread):
         self._runtime_state.stats.set("redetect_budget", budget)
 
     def set_tracker_params(self, iou_threshold: float = 0.25, max_misses: int = 4, matching_strategy: str = "hungarian", high_conf_thresh: float = 0.5, velocity_clip: float = 0.30, second_stage_iou_min: float = 0.1) -> None:
-        self._runtime_state.stats.set("tracker_iou_threshold_hash", hash(iou_threshold))
+        self._runtime_state.stats.set("tracker_iou_threshold", iou_threshold)
 
     def set_filter_type(self, filter_type: str, kernel_sigma: float | None = None) -> None:
-        self._runtime_state.stats.set("filter_type_hash", hash(filter_type))
+        self._runtime_state.stats.set("filter_type", filter_type)  # 存原始配置值：str hash 跨进程不稳定
 
     def set_smooth_alpha(self, alpha: float) -> None:
-        self._runtime_state.stats.set("smooth_alpha_hash", hash(alpha))
+        self._runtime_state.stats.set("smooth_alpha", alpha)
 
     def set_reid_config(self, enabled: bool = False, min_tracks: int = 3, stride: int = 3) -> None:
         self._runtime_state.stats.set("reid_enabled", int(enabled))
 
     def set_rectangle_sensitivity(self, level: str) -> None:
-        self._runtime_state.stats.set("rect_sensitivity_hash", hash(level))
+        self._runtime_state.stats.set("rect_sensitivity", level)  # 存原始配置值：str hash 跨进程不稳定
 
     def set_rectangle_max_count(self, count: int) -> None:
         self._runtime_state.stats.set("rect_max_count", count)
