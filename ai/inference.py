@@ -514,6 +514,10 @@ class InferWorker(QThread):
         # TargetStage → EventStage）处理，使用 visioncore.pipeline.adapters
         # 中的适配器包装现有后端。Legacy 代码路径完全不变。
         self._pipeline_enabled: bool = False
+        # 跟踪后端模式（"auto" / "python" / "rust"），默认 "auto"：
+        # DetectionTracker.__new__ 解析——omintrack 可用即 Rust，否则 Python。
+        # 运行中切换不重建既有 tracker，仅对新接入/重置的 slot 生效。
+        self._tracker_backend: str = "auto"
         # 单写契约（第 4 步）：Pipeline 模式仅当 TargetStage 确实完成
         # TargetManager.update_targets 时置 True，run() 尾部据此跳过旁路；
         # Legacy / 跳帧 / Pipeline 前置失败路径保持 False -> 执行一次 bypass。
@@ -549,6 +553,21 @@ class InferWorker(QThread):
         """
         self._pipeline_enabled = bool(enabled)
         logging.info("Pipeline mode %s", "ENABLED" if enabled else "disabled (legacy)")
+
+    def set_tracker_backend(self, mode: str) -> None:
+        """切换跟踪后端模式（"auto" / "python" / "rust"，默认 "auto"）。
+
+        仅记录模式：运行中**不重建**既有 slot 的 tracker，对新接入
+        （register_slot）/ 重置的 slot 生效。auto 由
+        DetectionTracker.__new__ 解析（omintrack 可用即 Rust，否则
+        回退 Python）；显式 "rust" 在扩展不可用时构造会抛错。
+        """
+        mode = str(mode or "auto")
+        if mode not in ("auto", "python", "rust"):
+            logging.warning("Unknown tracker backend %r, falling back to auto", mode)
+            mode = "auto"
+        self._tracker_backend = mode
+        logging.info("Tracker backend mode = %s", mode)
 
     def _get_or_create_pipeline_runtime(self, slot_id: int) -> _SlotPipelineRuntime:
         """取回或懒创建指定 slot 的已 initialize Pipeline runtime。
@@ -2092,6 +2111,7 @@ class InferWorker(QThread):
                     reid_backend=self._reid_backend,
                     reid_min_tracks=self._reid_min_tracks,
                     reid_stride=self._reid_stride,
+                    backend=self._tracker_backend,
                 )
                 self._rectangle_trackers[slot_id] = RectangleTracker.from_preset(self._rectangle_sensitivity)
                 self._last_submit_ts_by_slot.pop(slot_id, None)

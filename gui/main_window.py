@@ -164,6 +164,10 @@ class MainWindow(QMainWindow):
         self._infer_worker.set_pipeline_enabled(
             SettingsDialog.load_pipeline_enabled()
         )
+        # 跟踪后端模式（默认 "auto"：omintrack 可用即 Rust，否则 Python）
+        self._infer_worker.set_tracker_backend(
+            SettingsDialog.load_ai_tracker_backend()
+        )
         self._infer_worker.set_head_classifier(
             self._ai_head_classifier_enabled,
             self._ai_head_classifier_path or None,
@@ -1261,6 +1265,12 @@ class MainWindow(QMainWindow):
         # 透传 Pipeline 模式开关 (C8) — 默认 False (Legacy Mode)
         self._infer_worker.set_pipeline_enabled(
             bool(cfg.get("pipeline_enabled", False))
+        )
+
+        # 透传跟踪后端模式 — 默认 "auto"；运行中不重建既有 tracker，
+        # 对新接入/重置的 slot 生效
+        self._infer_worker.set_tracker_backend(
+            str(cfg.get("tracker_backend", "auto"))
         )
 
         self._apply_feature_flags_to_worker()

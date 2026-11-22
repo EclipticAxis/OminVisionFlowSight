@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import logging
+
 import numpy as np
 import cv2
 
@@ -725,11 +727,33 @@ class DetectionTracker:
     def __new__(cls, *args, backend: str | None = None, **kwargs):
         """后端开关：backend="rust" 或环境变量 OMINTRACK_BACKEND=rust 时，
         构造返回 ai.tracker_backend.RustDetectionTracker（公开 API 一致）。
-        默认 "python"，行为与原实现完全一致。"""
+
+        解析优先级：显式 ``backend`` 参数 > 环境变量 ``OMINTRACK_BACKEND`` >
+        缺省 ``"auto"``。``"auto"`` 语义：``import omintrack`` 成功即按
+        ``"rust"`` 走；``ImportError`` / ``OSError``（未安装扩展或 .pyd
+        DLL 加载失败均可能）回退 ``"python"``（debug 级日志）。显式
+        ``"rust"`` 不可用时照常抛错，不静默回退；显式 ``"python"`` 恒为
+        Python 实现。
+
+        数值差异说明：两后端 track ID / 状态机逐帧精确一致；坐标数值在
+        1e-6 容差内（330 帧递推实测最大偏差 ~1e-9，差异源自 nalgebra 与
+        NumPy/LAPACK 的 LU/Cholesky/EIGH 内部路径，见
+        docs/rust-tracker-core.md §3.1）。
+        """
         if cls is DetectionTracker:
             if backend is None:
                 import os
-                backend = os.environ.get("OMINTRACK_BACKEND", "python")
+                backend = os.environ.get("OMINTRACK_BACKEND", "auto")
+            if backend == "auto":
+                try:
+                    import omintrack  # noqa: F401
+                    backend = "rust"
+                except (ImportError, OSError):
+                    logging.getLogger(__name__).debug(
+                        "omintrack 不可用，跟踪后端回退 Python",
+                        exc_info=True,
+                    )
+                    backend = "python"
             if backend == "rust":
                 from ai.tracker_backend import RustDetectionTracker
                 return RustDetectionTracker(*args, **kwargs)

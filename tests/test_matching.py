@@ -18,7 +18,7 @@ def make_det(x1, y1, x2, y2, conf=0.8, label="person"):
 
 def test_hungarian_basic_tracking():
     """匈牙利匹配：两目标稳定跟踪，ID 跨帧保持。"""
-    t = DetectionTracker(matching_strategy="hungarian", max_misses=4)
+    t = DetectionTracker(backend="python", matching_strategy="hungarian", max_misses=4)
     dets = [make_det(0.1, 0.1, 0.3, 0.3, conf=0.9),
             make_det(0.5, 0.5, 0.7, 0.7, conf=0.85)]
     out1 = t.update(dets)
@@ -36,7 +36,7 @@ def test_hungarian_basic_tracking():
 
 def test_cascade_suppresses_low_conf_noise():
     """级联匹配：低置信度检测不创建新 track。"""
-    t = DetectionTracker(matching_strategy="cascade", high_conf_thresh=0.5, max_misses=4)
+    t = DetectionTracker(backend="python", matching_strategy="cascade", high_conf_thresh=0.5, max_misses=4)
     # 第一帧：高置信度目标
     t.update([make_det(0.3, 0.3, 0.4, 0.4, conf=0.85)])
     assert len(t._tracks) == 1
@@ -52,7 +52,7 @@ def test_cascade_suppresses_low_conf_noise():
 
 def test_cascade_low_conf_associates_existing():
     """级联匹配：低置信度检测可关联已有 track。"""
-    t = DetectionTracker(matching_strategy="cascade", high_conf_thresh=0.5, max_misses=4)
+    t = DetectionTracker(backend="python", matching_strategy="cascade", high_conf_thresh=0.5, max_misses=4)
     t.update([make_det(0.3, 0.3, 0.4, 0.4, conf=0.85)])
     tid1 = list(t._tracks.keys())[0]
 
@@ -66,7 +66,7 @@ def test_cascade_low_conf_associates_existing():
 
 def test_greedy_fallback():
     """贪婪策略作为回退仍正常工作。"""
-    t = DetectionTracker(matching_strategy="greedy", max_misses=4)
+    t = DetectionTracker(backend="python", matching_strategy="greedy", max_misses=4)
     out = t.update([make_det(0.1, 0.1, 0.3, 0.3, conf=0.9)])
     assert len(out) == 1
     print("  test_greedy_fallback: PASS")
@@ -74,7 +74,7 @@ def test_greedy_fallback():
 
 def test_appearance_similarity_clamp():
     """外观相似度 clamp 到 [0,1]。"""
-    t = DetectionTracker(matching_strategy="hungarian", max_misses=4)
+    t = DetectionTracker(backend="python", matching_strategy="hungarian", max_misses=4)
     # 无直方图时返回 0.5
     from ai.tracker import _Track
     import numpy as np
@@ -91,7 +91,7 @@ def test_appearance_similarity_clamp():
 
 def test_occlusion_recovery():
     """遮挡恢复：max_misses=4 时，遮挡 3 帧后目标重新出现 ID 保持。"""
-    t = DetectionTracker(matching_strategy="hungarian", max_misses=4, iou_threshold=0.15)
+    t = DetectionTracker(backend="python", matching_strategy="hungarian", max_misses=4, iou_threshold=0.15)
     t.update([make_det(0.3, 0.3, 0.4, 0.4, conf=0.85)])
     tid1 = list(t._tracks.keys())[0]
 
@@ -120,7 +120,7 @@ def test_velocity_clip_configurable():
 
 def test_set_tracker_params():
     """set_tracker_params 运行时更新参数。"""
-    t = DetectionTracker(matching_strategy="hungarian", iou_threshold=0.25, max_misses=4)
+    t = DetectionTracker(backend="python", matching_strategy="hungarian", iou_threshold=0.25, max_misses=4)
     t.set_tracker_params(iou_threshold=0.40, max_misses=6, matching_strategy="cascade")
     assert t._iou_threshold == 0.40
     assert t._max_misses == 6

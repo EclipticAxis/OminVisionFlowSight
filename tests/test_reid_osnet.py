@@ -154,7 +154,7 @@ def _run_person_scenario(tracker, frames: int = 6) -> None:
 
 
 def _make_py_tracker(backend):
-    return DetectionTracker(
+    return DetectionTracker(backend="python",
         matching_strategy="hungarian",
         reid_backend=backend, reid_min_tracks=3, reid_stride=1,
     )

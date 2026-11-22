@@ -1,8 +1,8 @@
 # omintrack Rust 跟踪核心 设计文档
 
-> **版本**：1.2 — 2026-11-22
-> **范围**：新增 `rust/omintrack/`（PyO3 cdylib）、`ai/tracker_backend.py`（适配层）、`ai/tracker.py` 后端开关、32 项专项测试与性能基准；1.1 追加 `rust/omintrack/src/py_api.rs` 外观数组 FFI 零拷贝优化（`Cargo.toml` 增 numpy crate 依赖）；1.2 追加 ReID mock 止损门控约定（仅 Python 侧 tracker.py / tracker_backend.py 门控条件变更，Rust core 不变，见 §3.2）
-> **状态**：1.0 已合入 main（PR #2 → `3243016`）；1.1 外观数组 FFI 零拷贝优化已合入 main（PR #7 → `3ee6a61`）；1.2 ReID mock 止损门控已合入 main（PR #8 → `1e636e8`，未触碰 Rust 文件）。cargo check / maturin 重建 / 32 项专项 + 全套件 1350 项全绿
+> **版本**：1.3 — 2026-11-22
+> **范围**：新增 `rust/omintrack/`（PyO3 cdylib）、`ai/tracker_backend.py`（适配层）、`ai/tracker.py` 后端开关、32 项专项测试与性能基准；1.1 追加 `rust/omintrack/src/py_api.rs` 外观数组 FFI 零拷贝优化（`Cargo.toml` 增 numpy crate 依赖）；1.2 追加 ReID mock 止损门控约定（仅 Python 侧 tracker.py / tracker_backend.py 门控条件变更，Rust core 不变，见 §3.2）；1.3 跟踪后端缺省 "python" → "auto"（构造时 import omintrack 探测，ImportError/OSError 回退 Python；显式 "rust" 仍抛错不回退），GUI 配置链见 [default-backends](default-backends.md)
+> **状态**：1.0 已合入 main（PR #2 → `3243016`）；1.1 外观数组 FFI 零拷贝优化已合入 main（PR #7 → `3ee6a61`）；1.2 ReID mock 止损门控已合入 main（PR #8 → `1e636e8`，未触碰 Rust 文件）。cargo check / maturin 重建 / 32 项专项 + 全套件 1350 项全绿；1.3 auto 默认（待合并：新增 tests/test_default_backends.py 16 项，全套件全绿）
 
 ---
 
@@ -16,11 +16,11 @@
 
 1. **行为零变化**：任何场景下与 Python 版输出一致（track_id / 状态机精确一致，数值 1e-6 容差内）——硬约束，见 §3；
 2. **数量级提速**：实测平均 ~37x（17x~60x，见 §5.3）；
-3. **零侵入接入**：默认后端不变（python），一行参数即可切换，调用方零改动。
+3. **零侵入接入**：缺省后端 "auto"（omintrack 可导入即 Rust，否则回退 python），一行参数即可切换，调用方零改动。
 
 ### 1.2 为什么不删 Python 实现
 
-Python 版（`ai/tracker.py`）保留为**参考实现与默认后端**：
+Python 版（`ai/tracker.py`）保留为**参考实现与无构建环境回退**（缺省 "auto" 时 omintrack 不可导入即用它）：
 
 - 无 Rust 工具链（或未执行 §4.1 构建）时项目开箱即用；
 - 等价性测试以 Python 版为 ground truth 对拍 Rust 版；
@@ -46,7 +46,7 @@ rust/omintrack/src/
 `DetectionTracker.__new__`（ai/tracker.py）实现后端开关：
 
 - `backend="rust"` 或环境变量 `OMINTRACK_BACKEND=rust` → 返回 `RustDetectionTracker`（ai/tracker_backend.py）实例，构造签名与公开 API 完全一致；
-- 默认 `"python"`，行为与历史版本完全一致；仅对精确类 `DetectionTracker` 生效（子类不被拦截）。
+- 缺省 `"auto"`：`import omintrack` 成功 → 按 `"rust"` 走，`ImportError` / `OSError`（.pyd DLL 加载失败）→ 回退 `"python"`（debug 日志），行为与历史版本一致；显式 `"python"` 恒为 Python；显式 `"rust"` 不可用时抛错不回退。仅对精确类 `DetectionTracker` 生效（子类不被拦截）。详见 [default-backends](default-backends.md) §2.1。
 
 `RustDetectionTracker`（facade）的职责划分：
 
@@ -113,11 +113,13 @@ venv\Scripts\python.exe -m maturin develop --manifest-path rust\omintrack\Cargo.
 
 国内镜像配置与排错见 `rust/omintrack/README.md`。**修改 rust/ 源码后必须重新执行本命令**，否则 venv 内 .pyd 与源码不一致（可比对 `venv/.../omintrack*.pyd` 与 `rust/omintrack/target/release/omintrack.dll` 的 MD5 验证）。
 
-### 4.2 启用
+### 4.2 启用（缺省 auto，无需手动启用）
 
 ```python
-tracker = DetectionTracker(backend="rust")   # 显式指定
-# 或设置环境变量 OMINTRACK_BACKEND=rust，所有默认构造点自动切换
+tracker = DetectionTracker()                 # 缺省 "auto"： omintrack 可导入即 Rust，否则 Python
+tracker = DetectionTracker(backend="rust")   # 显式指定（扩展不可用时抛错，不静默回退）
+tracker = DetectionTracker(backend="python") # 显式 Python（对拍 / 调试）
+# 或设置环境变量 OMINTRACK_BACKEND=python|rust|auto，覆盖所有默认构造点
 ```
 
 ## 5. 验证体系

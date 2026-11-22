@@ -45,7 +45,7 @@
 
 ## 功能特性
 
-- 🚀 **Rust 跟踪内核（新）**：跟踪核心（UKF 滤波族 / AUTO 自适应 / 匹配引擎 / 重检测与生命周期管理）的 Rust 重写版，经 PyO3 暴露为 `omintrack.RustTracker`。与 Python 版**逐帧等价**（18 个等价性测试，数值容差 1e-6，ID / 状态机精确一致），基准实测**平均约 37x 加速**（20 tracks x 500 帧，3 滤波器 x 3 匹配策略）。默认仍为 Python 后端，`backend="rust"` 或环境变量 `OMINTRACK_BACKEND=rust` 即可切换，调用方零改动。
+- 🚀 **Rust 跟踪内核（新）**：跟踪核心（UKF 滤波族 / AUTO 自适应 / 匹配引擎 / 重检测与生命周期管理）的 Rust 重写版，经 PyO3 暴露为 `omintrack.RustTracker`。与 Python 版**逐帧等价**（18 个等价性测试，数值容差 1e-6，ID / 状态机精确一致），基准实测**平均约 37x 加速**（20 tracks x 500 帧，3 滤波器 x 3 匹配策略）。默认 **auto**： omintrack 可导入即用 Rust，否则自动回退纯 Python（零构建开箱即用）；也可在设置对话框或经 `OMINTRACK_BACKEND` 环境变量手动指定，调用方零改动。
 - 📷 **多路相机采集**：多路视频源并行采集与录制，支持 RTSP / IP 摄像头 / USB 摄像头 / 本地文件等输入（PyAV DirectShow），多路 H.264 MP4 同步录像。
 - 🎯 **多维度目标检测**：
   - YOLOv8 / YOLO26 通用目标检测（COCO 80 类）
@@ -127,22 +127,24 @@ Windows 用户也可直接运行随附的 `start.bat`。脚本通过 `%~dp0` 定
 start.bat
 ```
 
-首次启动后，可通过 GUI 的**设置对话框**开闭各项功能（人体检测、骨骼、手势、矩形检测、去噪、滤波器类型、ROI 重检、头部属性、ReID（OSNet 行人重识别）等）。
+首次启动后，可通过 GUI 的**设置对话框**开闭各项功能（人体检测、骨骼、手势、矩形检测、去噪、滤波器类型、ROI 重检、头部属性、ReID（OSNet 行人重识别，默认启用，可在设置中关闭）等）。
 
-### 3.（可选）启用 Rust 跟踪内核
+### 3. Rust 跟踪内核（默认自动启用）
 
-默认使用纯 Python 跟踪后端，零构建即可运行。如需约 37x 的跟踪性能，安装 [Rust 工具链](https://rustup.rs/) 后构建扩展：
+跟踪核心默认 **auto** 后端：`omintrack` 扩展可导入即用 Rust（基准实测平均约 37x
+加速），未构建则自动回退纯 Python，行为一致、开箱即用。手动切换方式：
+
+```python
+tracker = DetectionTracker(backend="rust")   # 代码显式指定
+# 或设置环境变量 OMINTRACK_BACKEND=python / rust / auto，覆盖所有默认构造点
+```
+
+也可以在 GUI **设置对话框 → 跟踪后端**中切换（对新接入/重置的相机生效）。
+如需自行构建扩展（[Rust 工具链](https://rustup.rs/) + maturin）：
 
 ```powershell
 pip install maturin
 maturin develop --manifest-path rust\omintrack\Cargo.toml --release
-```
-
-然后任选其一启用：
-
-```python
-tracker = DetectionTracker(backend="rust")   # 代码显式指定
-# 或设置环境变量 OMINTRACK_BACKEND=rust，所有默认构造点自动切换
 ```
 
 构建细节与国内镜像加速见 [rust/omintrack/README.md](./rust/omintrack/README.md)。

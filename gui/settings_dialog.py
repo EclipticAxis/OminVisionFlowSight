@@ -1,3 +1,4 @@
+import importlib.util
 import logging
 from pathlib import Path
 
@@ -48,6 +49,7 @@ class SettingsDialog(QDialog):
     _KEY_AI_PERSON_REDETECT_RETRIES = "ai/person_redetect_max_retries"
     _KEY_AI_PERSON_REDETECT_ROI_PAD = "ai/person_redetect_roi_pad"
     _KEY_AI_FILTER_TYPE = "ai/filter_type"
+    _KEY_AI_TRACKER_BACKEND = "ai/tracker_backend"
     _KEY_AI_MCUKF_KERNEL_SIGMA = "ai/mcukf_kernel_sigma"
     _KEY_AI_DENOISE_METHOD = "ai/denoise_method"
     _KEY_AI_DENOISE_STRENGTH = "ai/denoise_strength"
@@ -74,6 +76,7 @@ class SettingsDialog(QDialog):
     _RECOMMENDED_REDETECT_RETRIES = 2
     _RECOMMENDED_REDETECT_ROI_PAD = 0.15
     _RECOMMENDED_FILTER_TYPE = "ukf"
+    _RECOMMENDED_TRACKER_BACKEND = "auto"
     _RECOMMENDED_MCUKF_KERNEL_SIGMA = 0.25
     _RECOMMENDED_DENOISE_METHOD = "none"
     _RECOMMENDED_DENOISE_STRENGTH = 5
@@ -108,6 +111,7 @@ class SettingsDialog(QDialog):
         self._ai_redetect_retries = self.load_ai_person_redetect_retries()
         self._ai_redetect_roi_pad = self.load_ai_person_redetect_roi_pad()
         self._ai_filter_type = self.load_ai_filter_type()
+        self._ai_tracker_backend = self.load_ai_tracker_backend()
         self._ai_mcukf_sigma = self.load_ai_mcukf_kernel_sigma()
         self._ai_denoise_method = self.load_ai_denoise_method()
         self._ai_denoise_strength = self.load_ai_denoise_strength()
@@ -217,6 +221,7 @@ class SettingsDialog(QDialog):
         layout.addLayout(self._create_spin_row_int("重检测尝试", self._ai_redetect_retries, 0, 5, 1, "_redetect_retries_spin", suffix=" (0=关)"))
         layout.addLayout(self._create_spin_row("ROI 扩展系数", self._ai_redetect_roi_pad, 0.0, 0.5, 0.05, "_roi_pad_spin"))
         layout.addLayout(self._create_filter_type_row())
+        layout.addLayout(self._create_tracker_backend_row())
         layout.addLayout(self._create_spin_row("MCUKF 核带宽", self._ai_mcukf_sigma, 0.1, 2.0, 0.05, "_mcukf_sigma_spin"))
         layout.addLayout(self._create_matching_strategy_row())
         layout.addLayout(self._create_spin_row("IoU 匹配阈值", self._ai_iou_threshold, 0.10, 0.60, 0.05, "_iou_threshold_spin"))
@@ -483,6 +488,34 @@ class SettingsDialog(QDialog):
         row.addWidget(self._filter_type_combo, stretch=1)
         return row
 
+    def _create_tracker_backend_row(self) -> QHBoxLayout:
+        """跟踪后端下拉框（auto 默认；Rust 项仅在 omintrack 可导入时提供）。"""
+        row = QHBoxLayout()
+        row.setSpacing(8)
+
+        lbl = QLabel("跟踪后端")
+        lbl.setStyleSheet(f"color: {C['TEXT_SECONDARY']}; font-size: 9pt;")
+        lbl.setFixedWidth(100)
+        row.addWidget(lbl)
+
+        self._tracker_backend_combo = WheelFocusComboBox()
+        self._tracker_backend_combo.setFixedHeight(36)
+        self._tracker_backend_combo.setToolTip(
+            "自动：Rust 扩展可用即用 Rust，否则 Python；"
+            "切换后对新接入/重置的相机生效"
+        )
+        self._tracker_backend_combo.addItem("自动（推荐）", "auto")
+        self._tracker_backend_combo.addItem("Python", "python")
+        # Rust 项仅在扩展已构建可导入时提供，防止用户选到必炸项
+        if importlib.util.find_spec("omintrack") is not None:
+            self._tracker_backend_combo.addItem("Rust", "rust")
+
+        index = self._tracker_backend_combo.findData(self._ai_tracker_backend)
+        if index >= 0:
+            self._tracker_backend_combo.setCurrentIndex(index)
+        row.addWidget(self._tracker_backend_combo, stretch=1)
+        return row
+
     def _create_matching_strategy_row(self) -> QHBoxLayout:
         """匹配策略下拉框。"""
         row = QHBoxLayout()
@@ -704,6 +737,22 @@ class SettingsDialog(QDialog):
         if idx_hc >= 0:
             self._head_classifier_combo.setCurrentIndex(idx_hc)
         self._head_classifier_stride_spin.setValue(self._RECOMMENDED_HEAD_CLASSIFIER_STRIDE)
+        idx_tb = self._tracker_backend_combo.findData(self._RECOMMENDED_TRACKER_BACKEND)
+        if idx_tb >= 0:
+            self._tracker_backend_combo.setCurrentIndex(idx_tb)
+        # 推荐恢复 = 启用随仓库模型：走与默认加载相同的"默认模型发现"逻辑，
+        # 避免把推荐路径退化为回填 ""（= 恢复成关闭）。
+        default_reid = self._default_reid_model_path()
+        if default_reid:
+            idx_reid = self._reid_model_combo.findData(default_reid)
+            if idx_reid < 0:
+                self._reid_model_combo.addItem(Path(default_reid).name, default_reid)
+                idx_reid = self._reid_model_combo.findData(default_reid)
+            self._reid_model_combo.setCurrentIndex(idx_reid)
+        else:
+            idx_reid = self._reid_model_combo.findData("")
+            if idx_reid >= 0:
+                self._reid_model_combo.setCurrentIndex(idx_reid)
 
     def _on_confirm(self) -> None:
         self._save_settings(self._current_dir)
@@ -721,6 +770,9 @@ class SettingsDialog(QDialog):
         )
         self._save_reid_model_settings(
             self._reid_model_combo.currentData() or "",
+        )
+        self._save_tracker_backend_settings(
+            self._tracker_backend_combo.currentData() or "auto",
         )
         self._save_head_classifier_settings(
             bool(self._head_classifier_combo.currentData()),
@@ -777,6 +829,7 @@ class SettingsDialog(QDialog):
             "reid_min_tracks": int(self._reid_min_tracks_spin.value()),
             "reid_stride": int(self._reid_stride_spin.value()),
             "reid_model_path": self._reid_model_combo.currentData() or "",
+            "tracker_backend": self._tracker_backend_combo.currentData() or "auto",
             "head_classifier_enabled": bool(self._head_classifier_combo.currentData()),
             "head_classifier_path": self._head_classifier_combo.currentData() or "",
             "head_classifier_stride": int(self._head_classifier_stride_spin.value()),
@@ -858,6 +911,17 @@ class SettingsDialog(QDialog):
             model_path or "<off>",
         )
 
+    def _save_tracker_backend_settings(
+        self,
+        mode: str,
+    ) -> None:
+        settings = QSettings(self._SETTINGS_ORG, self._SETTINGS_APP)
+        settings.setValue(self._KEY_AI_TRACKER_BACKEND, str(mode or "auto"))
+        logging.info(
+            "SettingsDialog: saved tracker backend = %s",
+            mode or "auto",
+        )
+
     @staticmethod
     def save_ai_model_path(model_path: str) -> None:
         settings = QSettings(SettingsDialog._SETTINGS_ORG, SettingsDialog._SETTINGS_APP)
@@ -932,6 +996,20 @@ class SettingsDialog(QDialog):
         val = settings.value(SettingsDialog._KEY_AI_FILTER_TYPE, SettingsDialog._RECOMMENDED_FILTER_TYPE)
         ft = str(val or "ukf")
         return ft if ft in ("ukf", "mcukf", "manifold_ukf", "auto") else "ukf"
+
+    @staticmethod
+    def load_ai_tracker_backend() -> str:
+        settings = QSettings(SettingsDialog._SETTINGS_ORG, SettingsDialog._SETTINGS_APP)
+        val = str(
+            settings.value(
+                SettingsDialog._KEY_AI_TRACKER_BACKEND,
+                SettingsDialog._RECOMMENDED_TRACKER_BACKEND,
+            )
+            or "auto"
+        )
+        if val in ("auto", "python", "rust"):
+            return val
+        return SettingsDialog._RECOMMENDED_TRACKER_BACKEND
 
     @staticmethod
     def load_ai_mcukf_kernel_sigma() -> float:
@@ -1041,9 +1119,28 @@ class SettingsDialog(QDialog):
             return SettingsDialog._RECOMMENDED_REID_STRIDE
 
     @staticmethod
+    def _default_reid_model_path() -> str:
+        """默认 ReID 模型发现：首选 osnet_x0_25_256x128_msmt17.onnx，
+        否则取 models/osnet*.onnx 首个；都没有返回 ""（= 默认关闭）。"""
+        models_dir = Path.cwd() / "models"
+        preferred = models_dir / "osnet_x0_25_256x128_msmt17.onnx"
+        if preferred.exists():
+            return str(preferred)
+        if models_dir.exists():
+            matches = sorted(models_dir.glob("osnet*.onnx"), key=lambda p: p.name.lower())
+            if matches:
+                return str(matches[0])
+        return ""
+
+    @staticmethod
     def load_ai_reid_model_path() -> str:
+        """三态加载：QSettings 键 ai/reid_model_path 不存在（首次启动/旧版
+        升级）→ 返回默认模型发现结果（默认启用，随仓库模型）；键存在 →
+        返回存储值（含 ""，尊重用户主动关闭）。"""
         settings = QSettings(SettingsDialog._SETTINGS_ORG, SettingsDialog._SETTINGS_APP)
-        val = settings.value(SettingsDialog._KEY_AI_REID_MODEL_PATH, SettingsDialog._RECOMMENDED_REID_MODEL_PATH)
+        if not settings.contains(SettingsDialog._KEY_AI_REID_MODEL_PATH):
+            return SettingsDialog._default_reid_model_path()
+        val = settings.value(SettingsDialog._KEY_AI_REID_MODEL_PATH, "")
         return str(val or "")
 
     @staticmethod
