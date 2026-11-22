@@ -165,7 +165,7 @@ def _keypoints_for(cx, cy, w, h, conf=0.8) -> list:
 
 def scenario_single_uniform(filter_type: str) -> dict:
     """场景 1：单目标匀速直线运动 x40 帧。"""
-    tracker = DetectionTracker(filter_type=filter_type)
+    tracker = DetectionTracker(backend="python", filter_type=filter_type)
     seq = [[_det(0.20 + 0.008 * f, 0.30 + 0.004 * f, 0.12, 0.16, conf=0.9)]
            for f in range(40)]
     data = _run(tracker, seq)
@@ -191,7 +191,7 @@ def _auto_dets(n: int = 330) -> list:
 
 def scenario_auto_outlier() -> dict:
     """场景 2：filter_type='auto'，前 30 帧正常 + 300 帧异常（周期性缺失）。"""
-    tracker = DetectionTracker(filter_type="auto")
+    tracker = DetectionTracker(backend="python", filter_type="auto")
     data = _run(tracker, _auto_dets())
     data["adaptor_type"] = tracker._adaptor.current_type
     return data
@@ -199,7 +199,7 @@ def scenario_auto_outlier() -> dict:
 
 def scenario_cross() -> dict:
     """场景 3：双目标交叉穿越 x50 帧，hungarian 匹配。"""
-    tracker = DetectionTracker(matching_strategy="hungarian")
+    tracker = DetectionTracker(backend="python", matching_strategy="hungarian")
     seq = [[_det(0.15 + 0.012 * f, 0.40, 0.16, 0.20, conf=0.90),
             _det(0.75 - 0.012 * f, 0.40, 0.10, 0.12, conf=0.85)]
            for f in range(50)]
@@ -208,7 +208,7 @@ def scenario_cross() -> dict:
 
 def scenario_mixed_conf(strategy: str) -> dict:
     """场景 4：混合高/低置信度检测（低置信度框远离既有 track）。"""
-    tracker = DetectionTracker(matching_strategy=strategy)
+    tracker = DetectionTracker(backend="python", matching_strategy=strategy)
     seq = []
     for f in range(3):
         seq.append([_det(0.20 + 0.005 * f, 0.30, 0.12, 0.16, conf=0.90),
@@ -224,7 +224,7 @@ def scenario_mixed_conf(strategy: str) -> dict:
 
 def scenario_disappear() -> dict:
     """场景 5：目标消失 -> predicted -> 删除 -> 重现得到新 track_id。"""
-    tracker = DetectionTracker()  # max_misses=4（默认）
+    tracker = DetectionTracker(backend="python", )  # max_misses=4（默认）
     seq = [[_det(0.30 + 0.004 * f, 0.40, 0.12, 0.16, conf=0.9)] for f in range(3)]
     seq += [[] for _ in range(6)]
     seq.append([_det(0.30 + 0.008, 0.40, 0.12, 0.16, conf=0.9)])
@@ -233,7 +233,7 @@ def scenario_disappear() -> dict:
 
 def scenario_predict_step() -> dict:
     """场景 6：update 后连续 2 次 predict_step（跳帧外推）。"""
-    tracker = DetectionTracker()
+    tracker = DetectionTracker(backend="python", )
     seq = [[_det(0.20 + 0.006 * f, 0.30, 0.12, 0.16, conf=0.9)] for f in range(6)]
     data = _run(tracker, seq)
     for _ in range(2):
@@ -245,7 +245,7 @@ def scenario_predict_step() -> dict:
 
 def scenario_obb() -> dict:
     """场景 7：带 OBB polygon 的检测 x20 帧（旋转 + 平移）。"""
-    tracker = DetectionTracker()
+    tracker = DetectionTracker(backend="python", )
     seq = []
     for f in range(20):
         cx, cy, ang = 0.30 + 0.005 * f, 0.40 + 0.002 * f, 0.05 * f
@@ -260,7 +260,7 @@ def scenario_obb() -> dict:
 
 def scenario_keypoints() -> dict:
     """场景 8：带 17 关键点的 person x15 帧（EMA 平滑）。"""
-    tracker = DetectionTracker()
+    tracker = DetectionTracker(backend="python", )
     seq = []
     for f in range(15):
         cx, cy = 0.25 + 0.004 * f, 0.35
@@ -272,7 +272,7 @@ def scenario_keypoints() -> dict:
 
 def scenario_redetect_success() -> dict:
     """场景 9a：redetect_enabled，回调返回与预测框重叠的框 -> redetected。"""
-    tracker = DetectionTracker(redetect_enabled=True)
+    tracker = DetectionTracker(backend="python", redetect_enabled=True)
     seq = [[_det(0.30 + 0.004 * f, 0.40, 0.12, 0.16, conf=0.9)] for f in range(3)]
     calls = []
 
@@ -289,7 +289,7 @@ def scenario_redetect_success() -> dict:
 
 def scenario_redetect_failure() -> dict:
     """场景 9b：回调持续返回 None -> attempts 达上限后不再调用。"""
-    tracker = DetectionTracker(redetect_enabled=True)
+    tracker = DetectionTracker(backend="python", redetect_enabled=True)
     seq = [[_det(0.30 + 0.004 * f, 0.40, 0.12, 0.16, conf=0.9)] for f in range(3)]
     calls = []
 
@@ -304,7 +304,7 @@ def scenario_redetect_failure() -> dict:
 
 def scenario_frame_appearance() -> dict:
     """场景 10：传入固定图案 BGR 帧，person 检测 x10 帧（HSV 外观路径）。"""
-    tracker = DetectionTracker()
+    tracker = DetectionTracker(backend="python", )
     fh, fw = 360, 480
     seq, frames = [], []
     for f in range(10):

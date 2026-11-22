@@ -1,8 +1,8 @@
 # ReID OSNet 后端 设计文档
 
-> **版本**：1.0 — 2026-11-22
-> **范围**：`ai/reid_backend.py`（重写）、`ai/tracker.py`（mock 止损门控）、`ai/tracker_backend.py`（mock 止损门控）、`ai/inference.py`（mock 提示）、`gui/settings_dialog.py`（ReID 模型配置行）、`gui/main_window.py`（配置链接通）、`tests/test_reid_osnet.py`（新增 9 项）、`models/osnet_x0_25_256x128_msmt17.onnx`（PINTO0309 模型随仓库分发）
-> **状态**：已合入 main（PR #8 → `1e636e8`）；全套件 1350 项全绿（1341 既有 + 9 新增）
+> **版本**：1.1 — 2026-11-22
+> **范围**：`ai/reid_backend.py`（重写）、`ai/tracker.py`（mock 止损门控）、`ai/tracker_backend.py`（mock 止损门控）、`ai/inference.py`（mock 提示）、`gui/settings_dialog.py`（ReID 模型配置行）、`gui/main_window.py`（配置链接通）、`tests/test_reid_osnet.py`（新增 9 项）、`models/osnet_x0_25_256x128_msmt17.onnx`（PINTO0309 模型随仓库分发）；1.1 ReID 默认启用（键不存在 → 默认模型发现；键存在含 "" 尊重主动关闭；推荐恢复=随仓库模型），详见 [default-backends](default-backends.md) §2.3
+> **状态**：1.0 已合入 main（PR #8 → `1e636e8`）；全套件 1350 项全绿（1341 既有 + 9 新增）。1.1 待合并
 
 ---
 
@@ -61,7 +61,7 @@ ReID embedding 提取（帧相关）保留在 Python 侧，以 `det_emb`/`reid_a
 | 推理失败 | `_real_extract` 任何异常 → `logger.warning` + **返回 None**（该检测本帧无 embedding，匹配自然回退 HSV 外观路径）；**禁止回退 mock 向量** |
 | is_mock | `ReIDBackend.is_mock` property（= `self._mock`，保留 `_mock` 字段兼容 inference.py 既有读取）；显式路径加载失败 → mock + warning；自动发现无模型 → mock + `logger.warning("ReID mock 模式仅供管线验证，匹配不会激活")` |
 | 门控条件（双側同步） | `reid_active` 追加 `not getattr(backend, "is_mock", False)`；**getattr 默认 False** 兼容无 `is_mock` 的自定义 backend（如 tests 的 `_FakeReidBackend`，行为不变）；不加其他门控改动 |
-| 配置链 | QSettings 键 `ai/reid_model_path`（ComboBox 首项 `("关闭", "")`）；`enabled = bool(路径) and reid_min_tracks > 0`；`model_path=路径 or None`；既有 `_KEY_AI_REID_ENABLED` 加载逻辑不动 |
+| 配置链 | QSettings 键 `ai/reid_model_path`（ComboBox 首项 `("关闭", "")`）；**三态默认加载（1.1）**：键不存在（首次/旧版升级）→ 默认模型发现（首选 `osnet_x0_25_256x128_msmt17.onnx`，否则 `models/osnet*.onnx` 首个，无 → `""`）= 默认启用；键存在（含 `""`）→ 返回存储值，尊重用户主动关闭（用 `QSettings.contains()` 区分，禁止用默认值合并）；推荐恢复按钮走同一默认发现（推荐=启用随仓库模型，不退化为关闭）；`enabled = bool(路径) and reid_min_tracks > 0`；`model_path=路径 or None`；既有 `_KEY_AI_REID_ENABLED` 加载逻辑不动 |
 | 匹配权重 | ReID 激活且双侧 embedding 存在时 `0.4·IoU + 0.4·cosine + 0.2·center`；**不变** |
 
 ## 4. 维护指南

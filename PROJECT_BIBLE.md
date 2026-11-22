@@ -1,7 +1,7 @@
 # VisionBata（VisionDataPlatform）项目白皮书
 
 > **版本**：1.2.0
-> **最后更新**：2026-11-20
+> **最后更新**：2026-11-22
 > **文档类型**：项目全量技术白皮书（PROJECT BIBLE）  
 > **目标读者**：新开发者、AI Agent、项目维护者  
 
@@ -896,6 +896,7 @@ MainWindow.closeEvent()
 | 2026-11-22 | 侧栏 AI 子选项面板动画性能修复（[设计](docs/sidebar-options-animation.md)：瞬时几何 + 淡入替代逐帧高度动画、滚动条常驻消抖、目标状态 no-op 守卫；新增 5 项契约测试含陈旧钳制挤压回归） | ✅ PR #6 → `4111e24` |
 | 2026-11-22 | omintrack 外观数组 FFI 零拷贝优化（py_api 多路径提取 ndarray f64/f32 + list 回退，core 不变；[设计](docs/rust-tracker-core.md) §5.4） | ✅ PR #7 → `3ee6a61` |
 | 2026-11-22 | 接入真实 OSNet ReID 模型 + mock 止损门控（[设计](docs/reid-osnet-backend.md) 1.0：预处理契约 256×128 ImageNet 归一化→512 维自适应、推理异常返回 None 不回退 mock、tracker 双侧 is_mock 门控、GUI 配置链 QSettings `ai/reid_model_path`；新增 9 项测试，全套件 1350 项全绿） | ✅ PR #8 → `1e636e8` |
+| 2026-11-22 | 默认行为变更：跟踪后端 auto 默认 + ReID 默认启用（[设计](docs/default-backends.md) 1.0：backend 缺省 python→auto 含 OSError 回退、GUI `ai/tracker_backend` 键与 Rust 项 find_spec 门控、ReID 三态默认加载尊重主动关闭、推荐恢复=随仓库模型；既有测试 Python 对拍侧显式 `backend="python"` 适配，新增 16 项） | ⏳ 待合并 |
 
 ### 11.3 已知问题
 
@@ -1107,7 +1108,7 @@ if _is_mynew_model(path):
 | 决策 | 原因 | 不应轻易更改 |
 |------|------|-------------|
 | 1 个共享推理线程 | 避免 GPU 资源争抢和多模型实例内存爆炸 | ✅ |
-| 跟踪双实现（Python 参考 + Rust 性能） | Python 保证可移植与可读，Rust 提供性能；等价性测试锁定行为 | ✅（禁止只改一侧，见 [契约](docs/rust-tracker-core.md) §3.3） |
+| 跟踪双实现（Python 参考 + Rust 性能） | 默认 auto（omintrack 可用即 Rust），Python 保留参考实现与无构建回退；等价性测试锁定行为 | ✅（禁止只改一侧，见 [契约](docs/rust-tracker-core.md) §3.3 与 [默认行为](docs/default-backends.md)） |
 | squircle 资产单一定义源（theme.SQUIRCLE_ASSETS + 生成器） | 样式一致性机器可查（契约测试三方比对） | ✅ |
 | 归一化坐标 | 分辨率无关，跨摄像头一致 | ✅ |
 | QSettings 持久化 | 跨会话配置记忆 | ✅ |

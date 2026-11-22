@@ -96,7 +96,7 @@ def _check_introspection(py_trk, rs_trk, frame_no) -> None:
 def _run_pair(py_kwargs, rs_kwargs, det_seq, callbacks=None, frames=None,
               rs_det_hists=None, rs_det_embs=None, predict_steps=0):
     """同一场景双跑：Python DetectionTracker vs omintrack.RustTracker。"""
-    py_trk = DetectionTracker(**py_kwargs)
+    py_trk = DetectionTracker(backend="python", **py_kwargs)
     rs_trk = omintrack.RustTracker(**rs_kwargs)
     stats = {"max_abs": 0.0}
     n = len(det_seq)
@@ -294,7 +294,7 @@ def test_redetect_success():
     # Rust 侧需要自己的回调实例（同一回调会被两个 tracker 共享，分别记录）
     # 注意上面 _run_pair 把同一回调同时传给两边 —— 这里改为分开跑
     calls_py.clear()
-    py_trk2 = DetectionTracker(**kwargs)
+    py_trk2 = DetectionTracker(backend="python", **kwargs)
     for dets, cb in zip(seq, [None, None, None, make_cb(calls_py)]):
         py_trk2.update(dets, redetect_callback=cb)
     calls_rs.clear()
@@ -320,7 +320,7 @@ def test_redetect_failure():
         return cb
 
     calls_py, calls_rs = [], []
-    py_trk = DetectionTracker(**kwargs)
+    py_trk = DetectionTracker(backend="python", **kwargs)
     for dets, cb in zip(seq, [None] * 3 + [make_cb(calls_py)] * 5):
         py_trk.update(dets, redetect_callback=cb)
     rs_trk = omintrack.RustTracker(**kwargs)
@@ -370,7 +370,7 @@ def test_frame_appearance():
     """
     kwargs = {}
     seq, frames = _appearance_frames(10, [((30, 30, 220), lambda f: 0.25 + 0.01 * f)])
-    py_trk = DetectionTracker(**kwargs)
+    py_trk = DetectionTracker(backend="python", **kwargs)
     rs_trk = omintrack.RustTracker(**kwargs)
     stats = {"max_abs": 0.0}
     for f, (dets, frame) in enumerate(zip(seq, frames)):
@@ -407,7 +407,7 @@ def test_update_color_hists_facade():
     kwargs = {}
     seq, frames = _appearance_frames(12, [((30, 30, 220), lambda f: 0.20 + 0.006 * f),
                                           ((30, 220, 30), lambda f: 0.70 - 0.006 * f)])
-    py_trk = DetectionTracker(**kwargs)
+    py_trk = DetectionTracker(backend="python", **kwargs)
     rs_trk = omintrack.RustTracker(**kwargs)
     stats = {"max_abs": 0.0}
     for f, (dets, frame) in enumerate(zip(seq, frames)):
@@ -438,7 +438,7 @@ def test_appearance_assisted_matching():
         [((30, 30, 220), lambda f: 0.24 + 0.004 * f),
          ((30, 220, 30), lambda f: 0.31 + 0.004 * f)],
     )
-    py_trk = DetectionTracker(**kwargs)
+    py_trk = DetectionTracker(backend="python", **kwargs)
     rs_trk = omintrack.RustTracker(**kwargs)
     stats = {"max_abs": 0.0}
     for f, (dets, frame) in enumerate(zip(seq, frames)):
@@ -487,7 +487,7 @@ def test_reid_embedding_matching():
          ((30, 220, 30), lambda f: 0.50 + 0.002 * f),
          ((220, 30, 30), lambda f: 0.80 - 0.003 * f)],
     )
-    py_trk = DetectionTracker(**py_kwargs)
+    py_trk = DetectionTracker(backend="python", **py_kwargs)
     rs_trk = omintrack.RustTracker(**rs_kwargs)
     stats = {"max_abs": 0.0}
     for f, (dets, frame) in enumerate(zip(seq, frames)):
@@ -522,7 +522,7 @@ def test_min_hits_and_setters():
     """min_hits_to_show 输出门控 + 运行时 setter 等价性。"""
     kwargs = {"min_hits_to_show": 2}
     seq = [[_det(0.30 + 0.004 * f, 0.40, 0.12, 0.16, conf=0.9)] for f in range(4)]
-    py_trk = DetectionTracker(**kwargs)
+    py_trk = DetectionTracker(backend="python", **kwargs)
     rs_trk = omintrack.RustTracker(**kwargs)
     stats = {"max_abs": 0.0}
     for f, dets in enumerate(seq):
