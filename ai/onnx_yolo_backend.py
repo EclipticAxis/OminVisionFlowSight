@@ -95,6 +95,22 @@ _COCO_NAMES = {
 
 
 class OnnxYoloBackend:
+    """ONNX Runtime YOLO 后端（DETECT / POSE / OBB）。
+
+    输出布局（经 `_normalize_output` 统一为 (N, C) 行优先后）：
+
+    - DETECT：``cx, cy, w, h`` + 每类分数（COCO 80 类时 C=84）。
+    - POSE：``cx, cy, w, h`` + 56（单类）或 分数块 + 51 关键点。
+    - OBB：``cx, cy, w, h`` + 每类分数 + ``angle``（**末通道**，与 ultralytics
+      ``utils/nms.py::non_max_suppression`` 的 extra 通道约定一致；DOTA 15 类时
+      C=20，angle 位于索引 19）。``angle`` 为弧度，无需 sigmoid 解码
+      （OBB26 头直接回归弧度，见 ``ultralytics/nn/modules/head.py::OBB26``）；
+      四顶点换算逐行对齐 ``ultralytics/utils/ops.py::xywhr2xyxyxyxy``（含旋转方向）。
+
+    NMS 说明：所有任务统一复用轴对齐外接矩形 IoU 的 ``_nms``（阈值 0.45）。
+    OBB 未实现 rotated NMS，外接矩形 NMS 是近似——对近似正框差异极小，
+    对高度倾斜框可能保留/抑制与 ultralytics 不同（见 docs/obb-onnx-backend.md）。
+    """
 
     def __init__(self, model_path: str | Path, *, task: ModelTask, provider_mode: str = "auto", imgsz: int = 640):
         self.model_path = str(model_path)
@@ -102,8 +118,6 @@ class OnnxYoloBackend:
         self.imgsz = int(imgsz)
         if task not in {ModelTask.DETECT, ModelTask.POSE, ModelTask.OBB}:
             raise ValueError(f"Unsupported ONNX YOLO task: {task}")
-        if task is ModelTask.OBB:
-            raise NotImplementedError("YOLO OBB ONNX support is reserved for Phase 2")
         if not Path(self.model_path).exists():
             raise FileNotFoundError(f"ONNX model not found: {self.model_path}")
 
@@ -128,6 +142,7 @@ class OnnxYoloBackend:
             self._session.get_providers(),
             list(zip(self._output_names, self._output_shapes)),
         )
+        self._class_names = self._read_class_names()
 
     @staticmethod
     def _task_str(task: ModelTask) -> str:
@@ -167,13 +182,43 @@ class OnnxYoloBackend:
         pred = self._normalize_output(outputs[0])
         if self.task is ModelTask.POSE:
             return self._decode_pose(pred, meta, conf)
+        if self.task is ModelTask.OBB:
+            return self._decode_obb(pred, meta, conf)
         return self._decode_detect(pred, meta, conf)
+
+    def _read_class_names(self) -> dict[int, str]:
+        """从 ONNX 模型 metadata 读取类别名（ultralytics 导出时写入 ``names``）。
+
+        缺失或解析失败时返回空 dict，调用方回退 ``str(class_id)``。
+        """
+        try:
+            import ast
+
+            metadata = self._session.get_modelmeta()
+            raw = (getattr(metadata, "custom_metadata_map", None) or {}).get("names")
+            if not raw:
+                return {}
+            parsed = ast.literal_eval(str(raw))
+        except Exception:
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        names: dict[int, str] = {}
+        for key, value in parsed.items():
+            try:
+                names[int(key)] = str(value)
+            except (TypeError, ValueError):
+                continue
+        return names
 
     def __call__(self, frame: np.ndarray, *, conf: float = 0.25, imgsz: int | None = None, verbose: bool = False):
         _ = imgsz, verbose
         return self.predict(frame, conf=conf)
 
     def _preprocess(self, frame: np.ndarray) -> tuple[np.ndarray, dict]:
+        # OpenCV 采集帧为 BGR；ultralytics 训练/推理均以 RGB 输入，导出模型亦按 RGB 归一化。
+        if frame.ndim == 3 and frame.shape[2] == 3:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w = frame.shape[:2]
         scale = min(self.imgsz / max(w, 1), self.imgsz / max(h, 1))
         new_w = int(round(w * scale))
@@ -260,6 +305,54 @@ class OnnxYoloBackend:
             )
         return _nms(detections, 0.45)
 
+    def _decode_obb(self, pred: np.ndarray, meta: dict, conf: float) -> list[Detection]:
+        """解码 OBB 输出：每行 ``cx, cy, w, h`` + 每类分数 + ``angle``（末通道，弧度）。
+
+        - 通道布局与 ultralytics OBB 导出一致（``head.py::OBB26`` 输出
+          ``cat([boxes, cls.sigmoid(), angle], 1)``，angle 在末通道）。
+        - ``angle`` 为弧度，直接代入；四顶点按 ultralytics ``xywhr2xyxyxyxy`` 逐行对齐。
+        - 逐点反映射归一化（letterbox 坐标系 → 原图 [0,1]）。
+        - ``bbox`` 为四顶点外接矩形；``polygon`` 为 4 个归一化角点，
+          与 ``Yolo26Backend._parse_obb`` 的格式逐字段一致。
+        - NMS 复用 ``_nms``（外接矩形 IoU，阈值 0.45）——这是 rotated NMS 的
+          近似，对近似正框影响可忽略（见类 docstring 与 docs/obb-onnx-backend.md）。
+        """
+        if pred.shape[1] < 6:
+            return []
+        boxes_cxcywh = pred[:, :4]
+        scores = pred[:, 4:-1]
+        angle = pred[:, -1]
+        class_ids = np.argmax(scores, axis=1)
+        confidences = scores[np.arange(scores.shape[0]), class_ids]
+        keep = confidences >= conf
+        if not np.any(keep):
+            return []
+        corners = _xywhr2xyxyxyxy(np.column_stack([boxes_cxcywh[keep], angle[keep]]))
+        detections = []
+        for pts, cls_id, score in zip(corners, class_ids[keep], confidences[keep]):
+            polygon = self._points_to_norm(pts, meta)
+            xs = [pt[0] for pt in polygon]
+            ys = [pt[1] for pt in polygon]
+            detections.append(
+                Detection(
+                    class_id=int(cls_id),
+                    label=self._class_names.get(int(cls_id), str(int(cls_id))),
+                    confidence=float(score),
+                    bbox=(min(xs), min(ys), max(xs), max(ys)),
+                    polygon=polygon,
+                )
+            )
+        return _nms(detections, 0.45)
+
+    def _points_to_norm(self, points: np.ndarray, meta: dict) -> list[tuple[float, float]]:
+        """letterbox 坐标系逐点反映射 + 归一化到 [0,1]（与 `_xywh_to_norm_xyxy` 同公式）。"""
+        pts = np.asarray(points, dtype=np.float64).reshape(-1, 2)
+        pad = np.array([float(meta["pad_x"]), float(meta["pad_y"])], dtype=np.float64)
+        size = np.array([float(meta["frame_w"]), float(meta["frame_h"])], dtype=np.float64)
+        norm = (pts - pad) / float(meta["scale"]) / size
+        np.clip(norm, 0.0, 1.0, out=norm)
+        return [(float(x), float(y)) for x, y in norm]
+
     def _xywh_to_norm_xyxy(self, box: np.ndarray, meta: dict) -> tuple[float, float, float, float] | None:
         cx, cy, bw, bh = [float(v) for v in box]
         x1 = cx - bw * 0.5
@@ -292,6 +385,26 @@ class OnnxYoloBackend:
             orig_y = (float(y) - meta["pad_y"]) / meta["scale"]
             decoded.append({"x": _clamp01(orig_x / frame_w), "y": _clamp01(orig_y / frame_h), "conf": float(score)})
         return decoded
+
+
+def _xywhr2xyxyxyxy(x: np.ndarray) -> np.ndarray:
+    """``(N, 5)`` xywhr → ``(N, 4, 2)`` 四顶点；逐行对齐 ultralytics
+    ``ultralytics/utils/ops.py::xywhr2xyxyxyxy``（angle 弧度，旋转方向一致）：
+
+    ``vec1 = (w/2*cos, w/2*sin)``、``vec2 = (-h/2*sin, h/2*cos)``；
+    ``pt1 = ctr+vec1+vec2``、``pt2 = ctr+vec1-vec2``、
+    ``pt3 = ctr-vec1-vec2``、``pt4 = ctr-vec1+vec2``。
+    """
+    ctr = x[:, :2]
+    w, h, angle = (x[:, i : i + 1] for i in range(2, 5))
+    cos_value, sin_value = np.cos(angle), np.sin(angle)
+    vec1 = np.concatenate([w / 2 * cos_value, w / 2 * sin_value], -1)
+    vec2 = np.concatenate([-h / 2 * sin_value, h / 2 * cos_value], -1)
+    pt1 = ctr + vec1 + vec2
+    pt2 = ctr + vec1 - vec2
+    pt3 = ctr - vec1 - vec2
+    pt4 = ctr - vec1 + vec2
+    return np.stack([pt1, pt2, pt3, pt4], -2)
 
 
 def _nms(detections: list[Detection], iou_threshold: float) -> list[Detection]:

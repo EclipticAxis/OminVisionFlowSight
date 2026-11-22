@@ -49,7 +49,7 @@
 - 📷 **多路相机采集**：多路视频源并行采集与录制，支持 RTSP / IP 摄像头 / USB 摄像头 / 本地文件等输入（PyAV DirectShow），多路 H.264 MP4 同步录像。
 - 🎯 **多维度目标检测**：
   - YOLOv8 / YOLO26 通用目标检测（COCO 80 类）
-  - OBB 有向目标检测（旋转框）
+  - OBB 有向目标检测（旋转框，.pt 与 ONNX / DirectML 均支持）
   - UHD 64x64 轻量人体检测（CPU 优先）
   - 矩形物体检测（Canny + 轮廓 + 线性卡尔曼跟踪）
 - 🧭 **多目标跟踪**：UKF / MCUKF / Manifold UKF 滤波族 + AUTO 自适应切换，OBB polygon 关联跟踪；跳帧（`infer_stride`）卡尔曼预测填充中间帧；目标消失后基于预测的 ROI 重检测自动找回。
