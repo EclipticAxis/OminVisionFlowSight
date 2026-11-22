@@ -1,8 +1,8 @@
 # omintrack Rust 跟踪核心 设计文档
 
-> **版本**：1.3 — 2026-11-22
-> **范围**：新增 `rust/omintrack/`（PyO3 cdylib）、`ai/tracker_backend.py`（适配层）、`ai/tracker.py` 后端开关、32 项专项测试与性能基准；1.1 追加 `rust/omintrack/src/py_api.rs` 外观数组 FFI 零拷贝优化（`Cargo.toml` 增 numpy crate 依赖）；1.2 追加 ReID mock 止损门控约定（仅 Python 侧 tracker.py / tracker_backend.py 门控条件变更，Rust core 不变，见 §3.2）；1.3 跟踪后端缺省 "python" → "auto"（构造时 import omintrack 探测，ImportError/OSError 回退 Python；显式 "rust" 仍抛错不回退），GUI 配置链见 [default-backends](default-backends.md)
-> **状态**：1.0 已合入 main（PR #2 → `3243016`）；1.1 外观数组 FFI 零拷贝优化已合入 main（PR #7 → `3ee6a61`）；1.2 ReID mock 止损门控已合入 main（PR #8 → `1e636e8`，未触碰 Rust 文件）。cargo check / maturin 重建 / 32 项专项 + 全套件 1350 项全绿；1.3 auto 默认已合入 main（PR #9 → `7f78651`；新增 tests/test_default_backends.py 16 项，全套件 1366 项全绿）
+> **版本**：1.4 — 2026-11-22
+> **范围**：新增 `rust/omintrack/`（PyO3 cdylib）、`ai/tracker_backend.py`（适配层）、`ai/tracker.py` 后端开关、32 项专项测试与性能基准；1.4 polygon IoU 由"外接 bbox 降级语义"升级为双側自实现精确凸多边形 IoU（Sutherland-Hodgman + shoelace，不再依赖 shapely，消除环境分歧源），见 [precise-polygon-iou](precise-polygon-iou.md)；1.1 追加 `rust/omintrack/src/py_api.rs` 外观数组 FFI 零拷贝优化（`Cargo.toml` 增 numpy crate 依赖）；1.2 追加 ReID mock 止损门控约定（仅 Python 侧 tracker.py / tracker_backend.py 门控条件变更，Rust core 不变，见 §3.2）；1.3 跟踪后端缺省 "python" → "auto"（构造时 import omintrack 探测，ImportError/OSError 回退 Python；显式 "rust" 仍抛错不回退），GUI 配置链见 [default-backends](default-backends.md)
+> **状态**：1.0 已合入 main（PR #2 → `3243016`）；1.1 外观数组 FFI 零拷贝优化已合入 main（PR #7 → `3ee6a61`）；1.2 ReID mock 止损门控已合入 main（PR #8 → `1e636e8`，未触碰 Rust 文件）。cargo check / maturin 重建 / 32 项专项 + 全套件 1350 项全绿；1.3 auto 默认已合入 main（PR #9 → `7f78651`；新增 tests/test_default_backends.py 16 项，全套件 1366 项全绿）；1.4 精确 polygon IoU 待合并（双側逐行同算法 + `_polygon_iou` 测试辅助，13 项新增测试，goldens 经 --update-golden 重生成逐字节不变——13 场景匹配指派未变，详见 precise-polygon-iou.md）
 
 ---
 
@@ -35,7 +35,7 @@ rust/omintrack/src/
 ├── tracker.rs    # Track + TrackerCore：匹配三策略 / 重检测 / 清理 / AUTO 评估
 ├── filters.rs    # UKF / MCUKF / ManifoldUKF（nalgebra 静态矩阵，8 维状态 17 sigma 点）
 ├── hungarian.rs  # O(n^3) 匈牙利（矩形补零成方阵，确定性 tie-break）
-├── geometry.rs   # box / 多边形外接 bbox IoU、中心
+├── geometry.rs   # box / 精确凸多边形 IoU（Sutherland-Hodgman）、中心
 ├── adaptor.rs    # AUTO 自适应滤波器选择（阈值 + hysteresis）
 ├── py_api.rs     # PyO3 class RustTracker 绑定（dict 进 dict 出）
 └── lib.rs        # 模块声明 + 测试辅助 pyfunction
@@ -76,7 +76,7 @@ rust/omintrack/src/
 - **级联 Stage 1 quirk**：Python 版 `_match_cascade` 注释写"Stage 1 高置信度检测"，但实现传入**全部**检测（`high_indices` 计算后从未使用）。Rust 版**照搬此 quirk**（`match_cascade` 中 `_high` 同理占位）。修正它属于行为变更，必须双侧同步并更新 golden；
 - 生命周期：新检测立即建轨（hits=1，无 tentative 期）；`misses > max_misses`（默认 4，即第 5 次 miss）删除；
 - EMA 顺序与系数：correct → box EMA(α=0.85) → confidence 0.7/0.3 → keypoints（x/y 用 α、conf 用 0.7/0.3）→ 空关键点按 bbox warp → polygon EMA；`prev_box` 在 EMA 之后保存；
-- 匹配代价：匈牙利 0.85·IoU + 0.10·center + 0.05·appearance（ReID 激活且双侧 embedding 存在时 0.4/0.4/0.2；ReID 激活另需 backend 非 mock：is_mock=False，门控在 Python 侧双實施行并使用 getattr 默认 False 兼容自定义 backend，见 [reid-osnet-backend](reid-osnet-backend.md) §3）；门控回退 IoU>0.05 且中心距<0.5·avg_size；无效匹配 cost≥0.999 丢弃；greedy 的 appearance 权重 0.15；
+- 匹配代价：匈牙利 0.85·IoU + 0.10·center + 0.05·appearance（ReID 激活且双侧 embedding 存在时 0.4/0.4/0.2；ReID 激活另需 backend 非 mock：is_mock=False，门控在 Python 侧双實施行并使用 getattr 默认 False 兼容自定义 backend，见 [reid-osnet-backend](reid-osnet-backend.md) §3）；门控回退 IoU>0.05 且中心距<0.5·avg_size；无效匹配 cost≥0.999 丢弃；greedy 的 appearance 权重 0.15；polygon 双侧存在（均 4 顶点）时 IoU 为**精确凸多边形 IoU**（Sutherland-Hodgman 裁剪 + shoelace 面积，双側逐行同算法，Rust `geometry::precise_polygon_iou` ↔ Python `ai.detection._precise_polygon_iou`），union ≤ 1e-8 返回 0.0；
 - 重检测：仅 label=="person"、按 misses 降序、每帧最多 `redetect_budget` 个；refined box 与预测框 IoU≥0.20 才算成功；超预算只 miss+1 不累加 attempts；
 - AUTO 适配器：EVAL_INTERVAL=30、NIS>8.0、P 条件数>1000、miss 率>0.5、Cholesky 失败>2、hysteresis=2 次投票才切换；
 - 匈牙利确定性：矩形代价补零成方阵，与 scipy `linear_sum_assignment` 数学等价；tie-break 行优先、严格小于才更新；
@@ -95,7 +95,7 @@ rust/omintrack/src/
 
 ### 3.4 已知边界
 
-- polygon IoU 按**无 shapely** 环境的 `_fallback_bbox_iou`（顶点集外接矩形）语义实现；若 Python 环境安装 shapely，两后端 OBB 匹配会出现语义分歧（届时需重新评估）；
+
 - UKF 创新协方差 S 奇异：Python 侧原行为为 np.linalg 异常，Rust 侧为 RuntimeError（均向上传播）；
 - 缺失 `label` 的检测按空串处理（与 Python `det.get("label", "")` 一致）；
 - greedy 排序：Python `np.argsort(-conf)` 非稳定、Rust 稳定排序——置信度完全并列时序可能不同（Python 侧本身不确定，Rust 只会更确定）；

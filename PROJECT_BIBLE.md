@@ -899,6 +899,7 @@ MainWindow.closeEvent()
 | 2026-11-22 | 接入真实 OSNet ReID 模型 + mock 止损门控（[设计](docs/reid-osnet-backend.md) 1.0：预处理契约 256×128 ImageNet 归一化→512 维自适应、推理异常返回 None 不回退 mock、tracker 双侧 is_mock 门控、GUI 配置链 QSettings `ai/reid_model_path`；新增 9 项测试，全套件 1350 项全绿） | ✅ PR #8 → `1e636e8` |
 | 2026-11-22 | 默认行为变更：跟踪后端 auto 默认 + ReID 默认启用（[设计](docs/default-backends.md) 1.0：backend 缺省 python→auto 含 OSError 回退、GUI `ai/tracker_backend` 键与 Rust 项 find_spec 门控、ReID 三态默认加载尊重主动关闭、推荐恢复=随仓库模型；既有测试 Python 对拍侧显式 `backend="python"` 适配，新增 16 项） | ✅ PR #9 → `7f78651` |
 | 2026-11-22 | OnnxYoloBackend 完整支持 OBB（[设计](docs/obb-onnx-backend.md) 1.0：20 通道布局 angle 末通道弧度 + xywhr2xyxyxyxy 逐行对齐 ultralytics、逐点反映射、bbox=polygon 外接矩形、外接矩形 NMS≈rotated NMS 近似、label 取 onnx metadata names、`_load_onnx_detect_model` 任务推断接通、预处理 BGR→RGB 修正；同帧对拍 valid 165/178、IoU mean 0.989、polygon dev<0.014；新增 12 项，全套件 1378 项全绿） | ✅ PR #10 → `95f9ac9` |
+| 2026-11-22 | 精确 Polygon IoU 双側自实现（[设计](docs/precise-polygon-iou.md) 1.0：Sutherland-Hodgman 凸裁剪 + shoelace 面积替换 shapely/外接矩形静默降级，消除 §3.4 shapely 环境分歧；双側逐行同算法 1e-9 对拍，新增 13 项测试；13 场景 golden 重生成逐字节不变） | ⏳ 待合并 |
 
 ### 11.3 已知问题
 
