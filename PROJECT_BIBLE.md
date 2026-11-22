@@ -94,7 +94,7 @@ VisionBata（内部代号 VisionDataPlatform，简称 VDP）是一个**桌面级
 | **手势** | 手部手指手势（OK/点赞/数字 1~5/握拳等） | ✅ 完整 | MediaPipe 0.10.14 |
 | **矩形** | Canny + 轮廓矩形检测 + 线性卡尔曼跟踪 | ✅ 完整 | OpenCV |
 | **头部属性** | 帽子/口罩/墨镜/眼睛开闭/嘴巴开闭 | ✅ 完整 | PINTO0309 CHC ONNX |
-| **ReID** | OSNet-x0.25 行人重识别（256×128→512 维 embedding，匹配外观加权 0.4；mock 止损门控） | ⏳ 待合并 | PINTO0309 OSNet ONNX |
+| **ReID** | OSNet-x0.25 行人重识别（256×128→512 维 embedding，匹配外观加权 0.4；mock 止损门控） | ✅ 完整 | PINTO0309 OSNet ONNX |
 | **去噪** | 双边滤波 / NL-Means 预处理 | ✅ 完整 | OpenCV |
 | **超分辨率** | ESPCN x4 小目标增强 | ✅ 完整（可选） | cv2.dnn_superres |
 | **录像** | H.264 MP4 多路同时录制 | ✅ 完整 | PyAV |
@@ -895,7 +895,7 @@ MainWindow.closeEvent()
 | 2026-11-20 | InferWorker Pipeline runtime 复用与生命周期收口（[设计](docs/inferworker-pipeline-parity.md) 0.4.0：每 slot 懒创建并复用已 initialize 的 `_SlotPipelineRuntime`，Legacy 零 runtime；redetect 回调逐帧重设、异常 runtime 淘汰重建、运行中 unregister 走 retirement 由 run 循环清理、stop 批量至多一次 shutdown；新增 11 项生命周期测试，五文件专项 137 项、含 Pipeline/core 扩展命令 168 项、全套件 1336 项通过） | ✅ PR #4 → `b4286d3` |
 | 2026-11-22 | 侧栏 AI 子选项面板动画性能修复（[设计](docs/sidebar-options-animation.md)：瞬时几何 + 淡入替代逐帧高度动画、滚动条常驻消抖、目标状态 no-op 守卫；新增 5 项契约测试含陈旧钳制挤压回归） | ✅ PR #6 → `4111e24` |
 | 2026-11-22 | omintrack 外观数组 FFI 零拷贝优化（py_api 多路径提取 ndarray f64/f32 + list 回退，core 不变；[设计](docs/rust-tracker-core.md) §5.4） | ✅ PR #7 → `3ee6a61` |
-| 2026-11-22 | 接入真实 OSNet ReID 模型 + mock 止损门控（[设计](docs/reid-osnet-backend.md) 1.0：预处理契约 256×128 ImageNet 归一化→512 维自适应、推理异常返回 None 不回退 mock、tracker 双侧 is_mock 门控、GUI 配置链 QSettings `ai/reid_model_path`；新增 9 项测试，全套件 1350 项全绿） | ⏳ 待合并 |
+| 2026-11-22 | 接入真实 OSNet ReID 模型 + mock 止损门控（[设计](docs/reid-osnet-backend.md) 1.0：预处理契约 256×128 ImageNet 归一化→512 维自适应、推理异常返回 None 不回退 mock、tracker 双侧 is_mock 门控、GUI 配置链 QSettings `ai/reid_model_path`；新增 9 项测试，全套件 1350 项全绿） | ✅ PR #8 → `1e636e8` |
 
 ### 11.3 已知问题
 

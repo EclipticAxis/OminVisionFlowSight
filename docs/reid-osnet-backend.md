@@ -2,7 +2,7 @@
 
 > **版本**：1.0 — 2026-11-22
 > **范围**：`ai/reid_backend.py`（重写）、`ai/tracker.py`（mock 止损门控）、`ai/tracker_backend.py`（mock 止损门控）、`ai/inference.py`（mock 提示）、`gui/settings_dialog.py`（ReID 模型配置行）、`gui/main_window.py`（配置链接通）、`tests/test_reid_osnet.py`（新增 9 项）、`models/osnet_x0_25_256x128_msmt17.onnx`（PINTO0309 模型随仓库分发）
-> **状态**：⏳ 待合并（全套件 1350 项全绿：1341 既有 + 9 新增）
+> **状态**：已合入 main（PR #8 → `1e636e8`）；全套件 1350 项全绿（1341 既有 + 9 新增）
 
 ---
 
