@@ -15,6 +15,7 @@ mock 模式：不依赖任何模型文件，基于 ROI 像素哈希生成确定�
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 
@@ -117,13 +118,13 @@ class ReIDBackend:
     def _mock_extract(self, roi: np.ndarray) -> np.ndarray:
         """mock 模式：基于像素哈希的确定性伪 embedding（256 维）。
 
-        保证同一 ROI 产生同一向量，不同 ROI 产生不同向量，
+        同一 ROI（含跨进程/跨会话）产生同一向量，不同 ROI 产生不同向量，
         仅用于验证 ReID 集成管线；生产匹配由 is_mock 门控关闭。
         """
         # 下采样到 8x4 减少哈希计算量
         small = roi[::max(1, roi.shape[0] // 4), ::max(1, roi.shape[1] // 8)]
-        # 基于像素内容生成确定性 seed
-        seed = hash(small.tobytes()) & 0xFFFFFFFF
+        # 基于像素内容生成确定性 seed（hashlib.md5：跨进程稳定，不受 PYTHONHASHSEED 影响）
+        seed = int.from_bytes(hashlib.md5(small.tobytes()).digest()[:4], "little")
         rng = np.random.default_rng(seed)
         emb = rng.standard_normal(self.EMBEDDING_DIM).astype(np.float32)
         # L2 归一化

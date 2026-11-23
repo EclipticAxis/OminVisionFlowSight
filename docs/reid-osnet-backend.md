@@ -2,7 +2,7 @@
 
 > **版本**：1.1 — 2026-11-22
 > **范围**：`ai/reid_backend.py`（重写）、`ai/tracker.py`（mock 止损门控）、`ai/tracker_backend.py`（mock 止损门控）、`ai/inference.py`（mock 提示）、`gui/settings_dialog.py`（ReID 模型配置行）、`gui/main_window.py`（配置链接通）、`tests/test_reid_osnet.py`（新增 9 项）、`models/osnet_x0_25_256x128_msmt17.onnx`（PINTO0309 模型随仓库分发）；1.1 ReID 默认启用（键不存在 → 默认模型发现；键存在含 "" 尊重主动关闭；推荐恢复=随仓库模型），详见 [default-backends](default-backends.md) §2.3
-> **状态**：1.0 已合入 main（PR #8 → `1e636e8`）；全套件 1350 项全绿（1341 既有 + 9 新增）。1.1 默认启用已合入 main（PR #9 → `7f78651`）
+> **状态**：1.0 已合入 main（PR #8 → `1e636e8`）；全套件 1350 项全绿（1341 既有 + 9 新增）。1.1 默认启用已合入 main（PR #9 → `7f78651`）；1.2 待合并（mock seed 改 hashlib.md5 跨进程确定 + 排查指引）
 
 ---
 
@@ -65,6 +65,8 @@ ReID embedding 提取（帧相关）保留在 Python 侧，以 `det_emb`/`reid_a
 | 匹配权重 | ReID 激活且双侧 embedding 存在时 `0.4·IoU + 0.4·cosine + 0.2·center`；**不变** |
 
 ## 4. 维护指南
+
+- **配置排查指引（1.2）**：ReID 是否启用看 i/reid_model_path（三态加载，见 default-backends.md §2.3）；i/reid_enabled / _RECOMMENDED_REID_ENABLED 是派生/遗留键，不能单独作为判断依据。mock seed 自 1.2 起为 hashlib.md5（跨进程/跨会话确定），mock 仍仅测试桩用途、生产匹配由 is_mock 门控关闭。
 
 - **更换 OSNet 变体**：注意输入尺寸（当前契约 256×128）与归一化约定
   （ImageNet mean/std、RGB 通道序）；其他输入尺寸的变体需同步改

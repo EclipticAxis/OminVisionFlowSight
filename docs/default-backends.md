@@ -2,7 +2,7 @@
 
 > **版本**：1.0 — 2026-11-22
 > **范围**：`ai/tracker.py`（`DetectionTracker.__new__` auto 语义）、`ai/inference.py`（`InferWorker` 后端模式透传）、`gui/settings_dialog.py`（跟踪后端配置行 + ReID 三态默认加载）、`gui/main_window.py`（配置链接通）、`tests/test_default_backends.py`（新增 16 项）
-> **状态**：已合入 main（PR #9 → `7f78651`）；新增 16 项测试，全套件 1366 项全绿
+> **状态**：已合入 main（PR #9 → `7f78651`）；新增 16 项测试，全套件 1366 项全绿。1.1 待合并（补 ReID 配置排查指引，见 §3）
 
 ---
 
@@ -62,6 +62,8 @@ ReID 键缺省时默认启用随仓库模型，**尊重用户主动关闭**。
 - **enabled 推导不变**：`main_window` 仍按 `路径非空 and reid_min_tracks > 0` 推导启用，自动生效；`ai/reid_enabled` 键不动。
 
 ## 3. 维护指南
+
+- **ReID 配置排查（1.1）**：不要只看 i/reid_enabled（派生量）；看 i/reid_model_path 三态——键不存在=默认发现模型启用、键存在且为空字符串=用户主动关闭、键存在非空=指定模型。
 
 - **发布 / 无构建环境行为**：未构建 Rust 的机器上 auto 回退 Python，行为与历史版本一致（debug 日志可见回退）；无 `models/osnet*.onnx` 的机器上 ReID 默认关闭且不炸应用。
 - **如何强制 Python 对拍**：环境变量 `OMINTRACK_BACKEND=python` 覆盖所有默认构造点；或显式 `DetectionTracker(backend="python")`。等价性 / 快照测试的 Python 侧均已显式 `backend="python"`，不受 auto 默认影响。
