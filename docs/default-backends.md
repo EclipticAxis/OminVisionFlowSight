@@ -2,7 +2,7 @@
 
 > **版本**：1.0 — 2026-11-22
 > **范围**：`ai/tracker.py`（`DetectionTracker.__new__` auto 语义）、`ai/inference.py`（`InferWorker` 后端模式透传）、`gui/settings_dialog.py`（跟踪后端配置行 + ReID 三态默认加载）、`gui/main_window.py`（配置链接通）、`tests/test_default_backends.py`（新增 16 项）
-> **状态**：已合入 main（PR #9 → `7f78651`）；新增 16 项测试，全套件 1366 项全绿。1.1 待合并（补 ReID 配置排查指引，见 §3）
+> **状态**：已合入 main（PR #9 → `7f78651`）；新增 16 项测试，全套件 1366 项全绿。1.1 已合入 main（PR #15 → `e9c01b2`，补 ReID 配置排查指引，见 §3）
 
 ---
 
