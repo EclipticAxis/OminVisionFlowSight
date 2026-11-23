@@ -1,5 +1,5 @@
 # Debug Session: yolo-detection-overlay
-- **Status**: [OPEN]
+- **Status**: [CLOSED]
 - **Issue**: YOLO 模型检测结果与界面标定/叠框表现异常，需要通过运行时证据确认是模型输出、信号链路还是绘制坐标映射问题。
 - **Debug Server**: `http://127.0.0.1:7777/event`
 - **Log File**: `.dbg/trae-debug-log-yolo-detection-overlay.ndjson`
