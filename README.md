@@ -31,7 +31,7 @@
 
 ## 项目概览
 
-在安防监控、工业质检、人机交互、出入口管理等场景中，多路视频的实时 AI 分析通常依赖 GPU 服务器集群，部署成本高、门槛高。OminVisionFlowSight（内部代号 *VisionDataPlatform*，简称 VDP）通过**共享推理线程 + 跳帧卡尔曼预测**的设计，在 CPU / 集成显卡（DirectML）上即可流畅完成最多 4 路视频源的并行采集、推理、跟踪与同步录像：
+在安防监控、工业质检、人机交互、出入口管理等场景中，多路视频的实时 AI 分析通常依赖 GPU 服务器集群，部署成本高、门槛高。OminVisionFlowSight（内部代号 *VisionDataPlatform*，简称 VDP；QSettings 组织名与部分历史文档中的 *VisionBata* 为既有配置兼容保留，勿改名以免丢失用户配置）通过**共享推理线程 + 跳帧卡尔曼预测**的设计，在 CPU / 集成显卡（DirectML）上即可流畅完成最多 4 路视频源的并行采集、推理、跟踪与同步录像：
 
 - **检测与跟踪一体化**：YOLO 检测 + 多滤波器卡尔曼跟踪，覆盖目标完整生命周期（出现 → 跟踪 → 预测 → 丢失 → 重找回）；
 - **跟踪核心提供 Rust 实现（omintrack）**：与 Python 版逐帧等价，一行参数即可切换；
@@ -84,7 +84,7 @@
 
 ### 1. 克隆与安装
 
-```bash
+````bash
 git clone https://github.com/EclipticAxis/OminVisionFlowSight.git
 cd OminVisionFlowSight
 
@@ -107,13 +107,13 @@ venv\Scripts\activate.bat
 
 安装依赖（未激活虚拟环境时，可用 `venv\Scripts\python.exe -m pip` 代替 `pip`）：
 
-```bash
+````bash
 pip install -r requirements.txt
 ```
 
 ### 2. 启动主程序
 
-```bash
+````bash
 # 图形界面（多路相机网格）；虚拟环境已激活时
 python main.py
 
@@ -153,7 +153,7 @@ maturin develop --manifest-path rust\omintrack\Cargo.toml --release
 
 除完整 GUI 外，项目提供最小可运行 Demo（单路摄像头闭环：采集 → 显示 → YOLO 检测 → 跟踪 → 叠加显示）：
 
-```bash
+````bash
 # 默认参数启动
 python demo.py
 
@@ -204,8 +204,10 @@ OminVisionFlowSight/
 
 ## 测试
 
+先安装开发依赖（含 pytest 与 Rust 扩展构建用 maturin）：`pip install -r requirements-dev.txt`。
+
 ```bash
-pytest tests/                                          # 全部用例（1341 项）
+pytest tests/                                          # 全部用例（1391 项）
 pytest tests/test_hand_gesture_recognizer.py           # MediaPipe Hands API / 数组布局兼容性（8 例）
 pytest tests/test_inferworker_pipeline_contract.py     # Legacy/Pipeline 帧处理与 runtime 契约（31 例）
 pytest tests/test_inferworker_resilience.py            # 推理线程防火带 / 单写 / slot / 生命周期（15 例）
@@ -215,7 +217,7 @@ pytest tests/test_tracker_snapshot.py --update-golden  # 行为变更后再生�
 python benchmark/benchmark_tracker_rust.py             # 跟踪器性能基准（Python vs Rust）
 ```
 
-> 说明：全套件 1341 项已通过（2026-11-22）。架构守护用例通过 `tests/_runtime_checks.py` 在子进程中检查 import 副作用，并使用 UTF-8 避免 Windows 中文区域编码影响。
+> 说明：全套件 1391 项已通过（2026-11-23）。架构守护用例通过 `tests/_runtime_checks.py` 在子进程中检查 import 副作用，并使用 UTF-8 避免 Windows 中文区域编码影响。
 
 ## 文档
 
