@@ -8,3 +8,4 @@ torch>=2.0.0
 mediapipe>=0.10.14,<0.10.15
 onnx>=1.22.0
 onnxruntime-directml>=1.24.0
+cbor2>=5.0.0
