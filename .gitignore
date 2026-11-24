@@ -31,6 +31,10 @@ error.log
 recordings/
 output/
 
+# Local datasets / vendored evaluation tools
+/data/
+/third_party/
+
 # OS
 Thumbs.db
 .DS_Store
