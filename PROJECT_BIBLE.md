@@ -1,7 +1,7 @@
 # VisionBata（VisionDataPlatform）项目白皮书
 
 > **版本**：1.2.0
-> **最后更新**：2026-11-22
+> **最后更新**：2026-11-25
 > **文档类型**：项目全量技术白皮书（PROJECT BIBLE）  
 > **目标读者**：新开发者、AI Agent、项目维护者  
 
@@ -465,7 +465,7 @@ detection_ready.emit(slot_id, detections)
 | 类 | 职责 |
 |-----|------|
 | `_DetectionUKF` | 基础无迹卡尔曼（8 维状态，17 sigma 点，Cholesky 分解） |
-| `_DetectionMCUKF` | 最大相关熵 UKF（高斯核加权，抗离群值，不动点迭代） |
+| `_DetectionMCUKF` | 创新域 IRLS-MCC UKF（标准 UT 矩、R 白化逐通道降权、有效观测噪声 R_eff、真实不动点迭代） |
 | `_DetectionManifoldUKF` | 流形 UKF（eigh 特征分解 + SPD 投影，P 永久正定） |
 | `_FilterAdaptor` | AUTO 自适应切换（监控 NIS/缺失率/P条件数/Cholesky 失败） |
 | `_Track` | 单条轨迹（滤波器 + 外观直方图 + OBB polygon 管理） |
@@ -651,7 +651,7 @@ QSettings (org=VisionBata, app=VisionDataPlatform)
 | 算法 | 位置 | 作用 | 复杂度 | 性能影响 |
 |------|------|------|--------|----------|
 | **无迹卡尔曼滤波 (UKF)** | `tracker.py::_DetectionUKF` | 非线性状态估计，跟踪 person bbox | O(n³) 8维 | 中等（Cholesky 分解） |
-| **最大相关熵 UKF (MCUKF)** | `tracker.py::_DetectionMCUKF` | 抗离群值 UKF，高斯核加权观测残差 | O(n³ + k·n) | 较高（不动点迭代） |
+| **最大相关熵 UKF (MCUKF)** | `tracker.py::_DetectionMCUKF` | 创新域 IRLS-MCC，R 白化逐通道 R_eff 抗离群 | O(k·n³) | 较高（最多 3 次 IRLS） |
 | **流形 UKF (Manifold UKF)** | `tracker.py::_DetectionManifoldUKF` | P 矩阵永远正定，SPD 投影 | O(n³) + 2·eigh | 较高（特征分解） |
 | **AUTO 自适应切换** | `tracker.py::_FilterAdaptor` | 运行时自动选择最优滤波器 | O(1) 评估 | 几乎为零 |
 | **线性卡尔曼** | `rectangle_detector.py::_RectangleKalman` | 矩形框线性跟踪 | O(n³) 8维 | 低 |
@@ -678,10 +678,11 @@ _DetectionUKF (基类)
   └─ 速度/尺度限幅
 
 _DetectionMCUKF (_DetectionUKF)
-  ├─ 高斯核加权观测残差 e_i
-  ├─ 权重 w_i = exp(-e_i²/(2σ²))
-  ├─ 不动点迭代 (默认3次)
-  └─ Joseph 形式协方差更新
+  ├─ z_pred/Pzz/Pxz 保持标准 UT（Wm/Wc）
+  ├─ R 对角白化当前量测残差，逐通道 c_j = clip(exp(-y_j²/(2σ²)), 1e-4, 1)
+  ├─ R_eff = R·C⁻¹，先验锚定 IRLS（默认最多 3 次，位移 < 1e-6 收敛）
+  ├─ K = Pxz·(Pzz + R_eff)⁻¹，Joseph 使用同一 R_eff
+  └─ AUTO/NIS 使用原始 S0 = Pzz + R；默认无量纲 σ = 1.0
 
 _DetectionManifoldUKF (_DetectionUKF)
   ├─ eigh 特征分解 P = V·diag(λ)·Vᵀ
@@ -767,7 +768,7 @@ for each vertex (vx, vy):
 | `ai/denoise_strength` | 1 | 1–10 | 去噪强度（保守映射） |
 | `ai/person_redetect_max_retries` | 2 | 0–5 | 目标丢失后重检测尝试次数 |
 | `ai/roi_pad` | 0.15 | 0–0.5 | ROI 裁剪扩展系数 |
-| `ai/mcukf_kernel_sigma` | 0.25 | 0.05–2.0 | MCUKF 高斯核带宽 |
+| `ai/mcukf_kernel_sigma` | 1.0 | 0.5–3.0 | MCUKF 白化残差无量纲核带宽；旧越界配置回退 1.0 |
 | `ai/head_classifier_stride` | 2 | 1–10 | 头部属性推理跳帧 |
 
 ### 9.3 配置传递路径
@@ -900,6 +901,7 @@ MainWindow.closeEvent()
 | 2026-11-22 | 默认行为变更：跟踪后端 auto 默认 + ReID 默认启用（[设计](docs/default-backends.md) 1.0：backend 缺省 python→auto 含 OSError 回退、GUI `ai/tracker_backend` 键与 Rust 项 find_spec 门控、ReID 三态默认加载尊重主动关闭、推荐恢复=随仓库模型；既有测试 Python 对拍侧显式 `backend="python"` 适配，新增 16 项） | ✅ PR #9 → `7f78651` |
 | 2026-11-22 | OnnxYoloBackend 完整支持 OBB（[设计](docs/obb-onnx-backend.md) 1.0：20 通道布局 angle 末通道弧度 + xywhr2xyxyxyxy 逐行对齐 ultralytics、逐点反映射、bbox=polygon 外接矩形、外接矩形 NMS≈rotated NMS 近似、label 取 onnx metadata names、`_load_onnx_detect_model` 任务推断接通、预处理 BGR→RGB 修正；同帧对拍 valid 165/178、IoU mean 0.989、polygon dev<0.014；新增 12 项，全套件 1378 项全绿） | ✅ PR #10 → `95f9ac9` |
 | 2026-11-22 | 精确 Polygon IoU 双側自实现（[设计](docs/precise-polygon-iou.md) 1.0：Sutherland-Hodgman 凸裁剪 + shoelace 面积替换 shapely/外接矩形静默降级，消除 §3.4 shapely 环境分歧；双側逐行同算法 1e-9 对拍，新增 13 项测试；13 场景 golden 重生成逐字节不变） | ✅ PR #14 → `e43c46c` |
+| 2026-11-25 | MCUKF 创新域 IRLS-MCC 修复：[设计](docs/mcukf-irls-correction.md)（标准 UT 矩 + R 白化逐通道 R_eff + 真实迭代 + 同 R_eff Joseph；Python/Rust 同步，默认无量纲 σ=1.0；新增 IRLS 11 项，全套件 1554 项通过，MOT17 对照无额外退化） | ✅ 修复分支已验证（待 PR 合并） |
 
 ### 11.3 已知问题
 

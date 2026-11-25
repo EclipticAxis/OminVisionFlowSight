@@ -203,6 +203,28 @@ def test_reid_real_repo_default_discovery():
 
 
 # ======================================================================
+# 3.1 MCUKF 无量纲核带宽默认值与旧配置迁移
+# ======================================================================
+
+def test_mcukf_sigma_default_and_legacy_values_fall_back(fake_settings):
+    from gui.settings_dialog import SettingsDialog
+
+    key = SettingsDialog._KEY_AI_MCUKF_KERNEL_SIGMA
+    assert SettingsDialog.load_ai_mcukf_kernel_sigma() == 1.0
+    for legacy in (0.25, 0.0, 0.49, 3.01, float("nan"), float("inf"), "bad"):
+        fake_settings[key] = legacy
+        assert SettingsDialog.load_ai_mcukf_kernel_sigma() == 1.0
+
+
+@pytest.mark.parametrize("sigma", [0.5, 1.0, 1.25, 2.0, 3.0])
+def test_mcukf_sigma_valid_values_are_preserved(fake_settings, sigma):
+    from gui.settings_dialog import SettingsDialog
+
+    fake_settings[SettingsDialog._KEY_AI_MCUKF_KERNEL_SIGMA] = sigma
+    assert SettingsDialog.load_ai_mcukf_kernel_sigma() == sigma
+
+
+# ======================================================================
 # 4. GUI offscreen 冒烟
 # ======================================================================
 
@@ -231,6 +253,20 @@ def test_settings_dialog_tracker_backend_row(qapp, fake_settings):
         assert combo.currentData() == "auto"
         # _collect（get_ai_settings）补全 tracker_backend
         assert dlg.get_ai_settings()["tracker_backend"] == "auto"
+    finally:
+        dlg.deleteLater()
+
+
+def test_settings_dialog_mcukf_sigma_spin_contract(qapp, fake_settings):
+    from gui.settings_dialog import SettingsDialog
+
+    dlg = SettingsDialog()
+    try:
+        spin = dlg._mcukf_sigma_spin
+        assert spin.minimum() == 0.5
+        assert spin.maximum() == 3.0
+        assert spin.singleStep() == 0.25
+        assert spin.value() == 1.0
     finally:
         dlg.deleteLater()
 

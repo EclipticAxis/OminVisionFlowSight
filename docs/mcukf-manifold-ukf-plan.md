@@ -1,5 +1,7 @@
 # MCUKF + Manifold UKF 实现方案
 
+> **勘误（2026-11-25，修复分支待 PR 合并）**：本文 §2.1 / §5.1 / §6 中 MCUKF 的伪码与 σ 语义**已被新实现取代**。旧写法把归一化凸核权误当 UT 的 Wm/Wc 使用，导致增益坍缩与假迭代；σ 按量测噪声 std 倍数取值的推荐（默认 0.4）随之失效。权威行为契约见 [mcukf-irls-correction](mcukf-irls-correction.md)。Manifold UKF（§2.2 / §5.2）部分不受影响。
+
 ## 一、需求
 
 在现有 `_DetectionUKF`（标准无迹卡尔曼滤波）基础上，新增两种高级滤波器：
@@ -13,44 +15,55 @@
 
 ### 2.1 MCUKF — 最大相关熵 UKF
 
-**核心思想**：标准 UKF 使用最小均方误差（MMSE）准则，对高斯噪声最优但对离群值敏感。MCUKF 用最大相关熵准则（MCC）替代 MMSE，通过高斯核函数自动降低大误差观测的权重。
+> **（2026-11-25 勘误）本节原始伪码已被取代**：旧伪码把归一化凸核权当作 UT 的 Wm/Wc 重建 z_pred / S / Pxz，导致增益坍缩且迭代为"假迭代"。以下为修正后的行为摘要，完整契约（含退化路径、边界声明）见 [mcukf-irls-correction](mcukf-irls-correction.md)。
+
+**核心思想**：标准 UKF 使用最小均方误差（MMSE）准则，对高斯噪声最优但对离群值敏感。MCUKF 用最大相关熵准则（MCC）替代 MMSE：保留标准 UT 结构不变，把相关熵作用于**量测噪声协方差**（IRLS 视角），等效地对离群量测"涨 R"、缩小其增益。
 
 **相关熵定义**：
 ```
 V(X, Y) = E[κ(X - Y)]，其中 κ(e) = exp(-e² / (2σ²))
 ```
 
-**与标准 UKF 的关键区别**（仅在 update 步骤）：
+**与标准 UKF 的关键区别**（仅在一次量测的 update 内部）：
 
-| 步骤 | 标准 UKF | MCUKF |
+| 步骤 | 标准 UKF | MCUKF（IRLS 修正版） |
 |---|---|---|
-| 优化准则 | MMSE | MCC（高斯核加权） |
-| 观测权重 | 均匀 Wmⁱ | 相关熵加权 G_σ(eⁱ) |
-| Kalman 增益 | 固定协方差驱动 | 相关熵调制协方差 |
-| 求解方式 | 闭式解 | **不动点迭代**（2-3 次） |
-| 对离群值 | 敏感 | 鲁棒（自动降权） |
+| 优化准则 | MMSE | MCC（IRLS 重加权最小二乘） |
+| z_pred / Pzz / Pxz | UT 权 Wm/Wc 加权 | **与标准 UKF 完全相同**（不被核权污染） |
+| 量测噪声 | 恒为 R | R_eff = R·C⁻¹，逐通道相关熵降权 |
+| 残差空间 | 原始量测空间 | 白化残差 y = R^{-1/2}·residual_t；residual_t = z − (z_pred + H(x_iter − x_pred)) 每轮重算（σ 无量纲） |
+| Kalman 增益 | K = Pxz·(Pzz+R)⁻¹ | K = Pxz·(Pzz+R_eff)⁻¹ |
+| 求解方式 | 闭式解 | IRLS，最多 3 次迭代，位移 1e-6 收敛 |
+| 协方差更新 | Joseph（R） | Joseph（**同一 R_eff**） |
+| 对离群值 | 敏感 | 鲁棒（K → 0，P → 预测协方差） |
 
-**MCUKF update 算法**：
+**修正后 update 算法**：
 
 ```
-1. 生成 sigma 点（与 UKF 相同）
-2. 观测传播：Zⁱ = h(Xⁱ)，i = 0..2n
-3. 计算每个 sigma 点的残差：eⁱ = z - Zⁱ
-4. 计算相关熵权重：wⁱ = exp(-||eⁱ||² / (2σ²))
-5. 归一化权重：wⁱ = wⁱ / Σwʲ
-6. 加权观测均值：z_pred = Σ wⁱ · Zⁱ
-7. 加权观测协方差：S = Σ wⁱ · (Zⁱ - z_pred)(Zⁱ - z_pred)ᵀ + R
-8. 加权交叉协方差：Pxz = Σ wⁱ · (Xⁱ - x_pred)(Zⁱ - z_pred)ᵀ
-9. Kalman 增益：K = Pxz · S⁻¹
-10. 状态更新：x = x_pred + K · (z - z_pred)
-11. [迭代步骤 3-10，直到收敛或达到最大迭代次数]
-12. 协方差更新（Joseph 形式）：P = (I - KH)P(I - KH)ᵀ + KRKᵀ
+1. 生成 sigma 点 + 观测传播（与 UKF 相同）
+2. z_pred / Pzz / Pxz ← 标准 UT（Wm/Wc 不变）
+3. S0 = Pzz + R              ← AUTO / NIS 永远使用 S0
+4. IRLS 迭代（最多 3 次；x_iter 首轮 = x_pred）：
+   residual_t = z - (z_pred + H·(x_iter - x_pred))  # 当前迭代点残差，每轮重算
+   y = R^{-1/2}·residual_t                          # 对角 R 白化
+   c_j = clip(exp(-y_j²/(2σ²)), 1e-4, 1)            # 逐通道核权（c_min=1e-4 限条件数）
+   R_eff = R·C⁻¹,  C = diag(c)
+   K = Pxz·(Pzz + R_eff)⁻¹
+   x_new = x_pred + K·(z - z_pred)   # 自 x_pred 重算，不累加
+   若 ‖x_new - x_iter‖ < 1e-6 则收敛退出
+   达上限 → 采用最后一轮的 x_new / K / R_eff
+   x_iter ← x_new
+5. 定稿 x = x_new；Joseph：P = (I-KH)·P_pred·(I-KH)ᵀ + K·R_eff·Kᵀ
+   （K / R_eff 取最后一轮，与 x_new 同轮一致）
 ```
 
-**关键参数 — 核带宽 σ**：
-- σ 大 → 退化为标准 UKF（鲁棒性低，收敛快）
-- σ 小 → 强鲁棒（可能收敛慢）
-- **推荐值**：σ = 2~5 × 观测噪声标准差。当前 R = 0.012·I，std ≈ 0.11，故 σ ≈ 0.3~0.5
+**关键参数 — 核带宽 σ（修正后语义）**：
+- σ 是**白化残差空间的无量纲**参数，默认 **1.0**（不再是量测噪声 std 的倍数，旧推荐 0.4 作废）
+- σ 大 → c_j → 1，退化为标准 UKF；σ 小 → 强鲁棒
+- R 白化使正常帧也按 c_j<1 降权（幅度随信噪比变化），属**有意的鲁棒保守性**而非恒等 UKF；对比 S0 白化（需 σ≈2 才相当），R 白化 + σ=1.0 离群抑制更好，正常/真实突变恢复无显著劣势
+- c_min = **1e-4**（非 1e-8）：限制 R_eff / S 条件数不过度极端
+- GUI 范围 **0.5–3.0**；旧配置文件超出该范围时由 loader 回退到 1.0
+- 普通噪声下 MCUKF **不恒等**于 UKF；σ 需按场景（噪声尺度 / 框抖动 / 误检率）标定，不存在全场景最优默认值
 
 ### 2.2 Manifold UKF — 流形 UKF
 
@@ -124,7 +137,7 @@ def __init__(self, ..., filter_type: str = "ukf"):
 ```python
 # _Track.__init__ 根据类型创建滤波器
 if filter_type == "mcukf":
-    self.kalman = _DetectionMCUKF(box, kernel_sigma=0.4)
+    self.kalman = _DetectionMCUKF(box, kernel_sigma=1.0)  # 2026-11-25 新无量纲语义
 elif filter_type == "manifold_ukf":
     self.kalman = _DetectionManifoldUKF(box)
 else:
@@ -150,6 +163,8 @@ SettingsDialog → MainWindow._apply_ai_settings → InferWorker.set_filter_type
 ## 五、`ai/tracker.py` 详细设计
 
 ### 5.1 `_DetectionMCUKF`
+
+> **（2026-11-25 勘误）以下类伪码为旧实现，已被取代，仅留档**：其中把归一化凸核权当作 UT 权重建 z_pred / S / Pxz（增益坍缩、假迭代），且 σ 语义（0.4，按噪声 std 倍数）已作废。当前实现的行为契约（标准 UT + R 对角白化 IRLS，σ 无量纲默认 1.0）见 [mcukf-irls-correction](mcukf-irls-correction.md)。
 
 ```python
 class _DetectionMCUKF(_DetectionUKF):
@@ -299,7 +314,7 @@ class DetectionTracker:
         self,
         ...,
         filter_type: str = "ukf",          # 新增
-        mcukf_kernel_sigma: float = 0.4,   # 新增
+        mcukf_kernel_sigma: float = 1.0,   # 新增（无量纲；勘误 2026-11-25，旧值 0.4 已作废）
     ):
         ...
         self._filter_type = filter_type
@@ -319,7 +334,7 @@ class DetectionTracker:
 | 配置项 | QSettings Key | 类型 | 默认 | 选项 |
 |---|---|---|---|---|
 | 滤波器类型 | `ai/filter_type` | str | "ukf" | ukf / mcukf / manifold_ukf |
-| MCUKF 核带宽 | `ai/mcukf_kernel_sigma` | float | 0.4 | 0.1 ~ 2.0 |
+| MCUKF 核带宽 | `ai/mcukf_kernel_sigma` | float | 1.0 | 0.5 ~ 3.0（无量纲；旧配置超出范围由 loader 回退 1.0） |
 
 GUI 下拉框：`UKF（标准）` / `MCUKF（鲁棒抗离群）` / `Manifold UKF（SPD 稳定）`
 
@@ -341,8 +356,8 @@ GUI 下拉框：`UKF（标准）` / `MCUKF（鲁棒抗离群）` / `Manifold UKF
 
 | 风险 | 滤波器 | 缓解 |
 |---|---|---|
-| 不动点迭代不收敛 | MCUKF | 限制 max_iter=3；收敛阈值 1e-6；退化时回退到标准 UKF 更新 |
-| 核带宽 σ 过小导致拒绝有效观测 | MCUKF | 默认 σ=0.4（约 3.6× 噪声 std）；设置下限 0.1 |
+| IRLS 迭代达上限 | MCUKF | 最多 3 次；位移阈值 1e-6；达上限采用最后一次鲁棒迭代；大 σ / 零残差自然退化回标准 UKF |
+| 核带宽 σ 设置不当（过小拒收正常观测 / 过大失去鲁棒性） | MCUKF | σ 无量纲默认 1.0，GUI 0.5–3.0；旧配置超范围由 loader 回退 1.0；按场景标定，不宣称全场景最优 |
 | 特征分解开销 | Manifold UKF | n=8 矩阵 eigh ~0.3μs，可接受 |
 | 滤波器热切换不生效 | 全部 | 已有 track 保持旧滤波器，新 track 使用新类型；调 set_filter_type 后 reset() 可强制全部重建 |
 | Joseph 形式计算量 | MCUKF | 仅多一次矩阵乘法，n=8 可忽略 |

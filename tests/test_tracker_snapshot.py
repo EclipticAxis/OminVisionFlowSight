@@ -368,26 +368,15 @@ def test_single_uniform_ukf(update_golden):
 
 def test_single_uniform_mcukf(update_golden):
     data = scenario_single_uniform("mcukf")
-    # 实测行为（已冻结为 golden）：mcukf_kernel_sigma=0.25 在此轨迹上会导致
-    # EMA 输出框几乎不随观测移动，IoU 掉出门控后周期性新建 track。
-    # 因此这里断言的是状态机事实：每帧恰好 1 个 normal 输出、
-    # track_id 单调不减、滤波器类型始终为 mcukf。
-    assert len(data["frames"]) == 40
-    seen_ids = []
+    # 新 IRLS-MCC UKF 契约（默认 sigma=1.0、R 白化逐通道相关熵、真实 IRLS）
+    # 下，匀速场景必须与 UKF 场景行为一致：40 帧单 track、无 predicted
+    # 幽灵。旧实现的周期性 ID churn 是核重加权 sigma 矩缺陷，不再作为期望。
+    # golden 已按上述新契约重新基线。
+    _assert_single_uniform(data)
     for fr in data["frames"]:
-        # 每帧恰好 1 个 normal 输出（当前观测的归属 track），
-        # 其余为等待删除的 predicted 幽灵 track（misses 1..4）
-        normal = [o for o in fr if o["track_state"] == "normal"]
-        assert len(normal) == 1
-        assert all(o["track_state"] == "predicted" for o in fr if o is not normal[0])
-        o = normal[0]
-        assert o["predicted_only"] is False
-        assert o["label"] == "person"
-        assert "polygon" not in o
-        seen_ids.append(o["track_id"])
-    assert seen_ids == sorted(seen_ids)
-    assert seen_ids[0] == 1
-    assert len(set(seen_ids)) >= 2  # 观测漂移触发过新 track
+        assert all(o["track_id"] == 1 for o in fr)
+        assert all(o["track_state"] == "normal" for o in fr)  # 无 predicted 输出
+    assert data["adaptor_type"] is None
     kalman_seen = {t["kalman"] for m in data["meta"] for t in m["tracks"].values()}
     assert kalman_seen == {"mcukf"}
     _check_golden("single_uniform_mcukf", data, update_golden)

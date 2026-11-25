@@ -36,7 +36,7 @@ class RustDetectionTracker:
         redetect_max_retries: int = 2,
         redetect_iou_threshold: float = 0.20,
         filter_type: str = "ukf",
-        mcukf_kernel_sigma: float = 0.25,
+        mcukf_kernel_sigma: float = 1.0,
         matching_strategy: str = "hungarian",
         high_conf_thresh: float = 0.5,
         velocity_clip: float = 0.30,

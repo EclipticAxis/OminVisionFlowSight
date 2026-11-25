@@ -224,7 +224,7 @@ python benchmark/benchmark_tracker_rust.py             # 跟踪器性能基准�
 `docs/` 与 `architecture/` 收录了完整的演进文档，精选入口：
 
 - **架构与规划**：[战略路线图](./docs/strategic-roadmap.md)、[VisionCore 流水线基础](./docs/pipeline-foundation.md)、[SentinelTrack 2.0 架构蓝图](./docs/sentineltrack-2.0-architecture-blueprint.md)
-- **跟踪与滤波**：[MCUKF / Manifold UKF 方案](./docs/mcukf-manifold-ukf-plan.md)、[AUTO 自适应滤波](./docs/auto-filter-adaptive-plan.md)、[跟踪阶段](./docs/tracker-stage.md)、[Rust 内核设计契约](./docs/rust-tracker-core.md)、[Rust 构建说明](./rust/omintrack/README.md)
+- **跟踪与滤波**：[MCUKF IRLS 修复契约](./docs/mcukf-irls-correction.md)、[MCUKF / Manifold UKF 方案](./docs/mcukf-manifold-ukf-plan.md)、[AUTO 自适应滤波](./docs/auto-filter-adaptive-plan.md)、[跟踪阶段](./docs/tracker-stage.md)、[Rust 内核设计契约](./docs/rust-tracker-core.md)、[Rust 构建说明](./rust/omintrack/README.md)
 - **识别运行时**：[MediaPipe Hands 兼容性约束](./docs/mediapipe-hands-compatibility.md)
 - **运行与维护**：[运行时元数据与启动脚本维护](./docs/runtime-maintenance.md)
 - **GUI 与主题**：[squircle 连续曲率圆角](./docs/squircle-capsule-widgets.md)

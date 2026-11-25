@@ -1227,7 +1227,7 @@ class MainWindow(QMainWindow):
         )
         # 透传滤波器类型配置
         filter_type = cfg.get("filter_type", "ukf")
-        mcukf_sigma = cfg.get("mcukf_kernel_sigma", 0.4)
+        mcukf_sigma = cfg.get("mcukf_kernel_sigma", 1.0)
         self._infer_worker.set_filter_type(filter_type, kernel_sigma=float(mcukf_sigma))
         # 透传去噪配置
         denoise_method = cfg.get("denoise_method", "none")

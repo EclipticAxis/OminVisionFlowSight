@@ -1,8 +1,8 @@
 # omintrack Rust 跟踪核心 设计文档
 
-> **版本**：1.4 — 2026-11-22
-> **范围**：新增 `rust/omintrack/`（PyO3 cdylib）、`ai/tracker_backend.py`（适配层）、`ai/tracker.py` 后端开关、32 项专项测试与性能基准；1.4 polygon IoU 由"外接 bbox 降级语义"升级为双側自实现精确凸多边形 IoU（Sutherland-Hodgman + shoelace，不再依赖 shapely，消除环境分歧源），见 [precise-polygon-iou](precise-polygon-iou.md)；1.1 追加 `rust/omintrack/src/py_api.rs` 外观数组 FFI 零拷贝优化（`Cargo.toml` 增 numpy crate 依赖）；1.2 追加 ReID mock 止损门控约定（仅 Python 侧 tracker.py / tracker_backend.py 门控条件变更，Rust core 不变，见 §3.2）；1.3 跟踪后端缺省 "python" → "auto"（构造时 import omintrack 探测，ImportError/OSError 回退 Python；显式 "rust" 仍抛错不回退），GUI 配置链见 [default-backends](default-backends.md)
-> **状态**：1.0 已合入 main（PR #2 → `3243016`）；1.1 外观数组 FFI 零拷贝优化已合入 main（PR #7 → `3ee6a61`）；1.2 ReID mock 止损门控已合入 main（PR #8 → `1e636e8`，未触碰 Rust 文件）。cargo check / maturin 重建 / 32 项专项 + 全套件 1350 项全绿；1.3 auto 默认已合入 main（PR #9 → `7f78651`；新增 tests/test_default_backends.py 16 项，全套件 1366 项全绿）；1.4 精确 polygon IoU 已合入 main（PR #14 → `e43c46c`）（双側逐行同算法 + `_polygon_iou` 测试辅助，13 项新增测试，goldens 经 --update-golden 重生成逐字节不变——13 场景匹配指派未变，详见 precise-polygon-iou.md）
+> **版本**：1.5 — 2026-11-25
+> **范围**：新增 `rust/omintrack/`（PyO3 cdylib）、`ai/tracker_backend.py`（适配层）、`ai/tracker.py` 后端开关、32 项专项测试与性能基准；1.5 MCUKF 改为标准 UT + R 对角白化的创新域 IRLS-MCC（Python/Rust 双侧、默认 σ=1.0、c_min=1e-4），见 [mcukf-irls-correction](mcukf-irls-correction.md)；1.4 polygon IoU 由"外接 bbox 降级语义"升级为双側自实现精确凸多边形 IoU（Sutherland-Hodgman + shoelace，不再依赖 shapely，消除环境分歧源），见 [precise-polygon-iou](precise-polygon-iou.md)；1.1 追加 `rust/omintrack/src/py_api.rs` 外观数组 FFI 零拷贝优化（`Cargo.toml` 增 numpy crate 依赖）；1.2 追加 ReID mock 止损门控约定（仅 Python 侧 tracker.py / tracker_backend.py 门控条件变更，Rust core 不变，见 §3.2）；1.3 跟踪后端缺省 "python" → "auto"（构造时 import omintrack 探测，ImportError/OSError 回退 Python；显式 "rust" 仍抛错不回退），GUI 配置链见 [default-backends](default-backends.md)
+> **状态**：1.0 已合入 main（PR #2 → `3243016`）；1.1 外观数组 FFI 零拷贝优化已合入 main（PR #7 → `3ee6a61`）；1.2 ReID mock 止损门控已合入 main（PR #8 → `1e636e8`，未触碰 Rust 文件）。cargo check / maturin 重建 / 32 项专项 + 全套件 1350 项全绿；1.3 auto 默认已合入 main（PR #9 → `7f78651`；新增 tests/test_default_backends.py 16 项，全套件 1366 项全绿）；1.4 精确 polygon IoU 已合入 main（PR #14 → `e43c46c`）（双側逐行同算法 + `_polygon_iou` 测试辅助，13 项新增测试，goldens 经 --update-golden 重生成逐字节不变——13 场景匹配指派未变，详见 precise-polygon-iou.md）；MCUKF IRLS 修正（2026-11-25 修复分支已验证、待 PR 合并：release 重建、等价 18 项、全套件 1554 项通过，行为契约见 §3.2 末条与 [mcukf-irls-correction](mcukf-irls-correction.md)）
 
 ---
 
@@ -79,6 +79,13 @@ rust/omintrack/src/
 - 匹配代价：匈牙利 0.85·IoU + 0.10·center + 0.05·appearance（ReID 激活且双侧 embedding 存在时 0.4/0.4/0.2；ReID 激活另需 backend 非 mock：is_mock=False，门控在 Python 侧双實施行并使用 getattr 默认 False 兼容自定义 backend，见 [reid-osnet-backend](reid-osnet-backend.md) §3）；门控回退 IoU>0.05 且中心距<0.5·avg_size；无效匹配 cost≥0.999 丢弃；greedy 的 appearance 权重 0.15；polygon 双侧存在（均 4 顶点）时 IoU 为**精确凸多边形 IoU**（Sutherland-Hodgman 裁剪 + shoelace 面积，双側逐行同算法，Rust `geometry::precise_polygon_iou` ↔ Python `ai.detection._precise_polygon_iou`），union ≤ 1e-8 返回 0.0；
 - 重检测：仅 label=="person"、按 misses 降序、每帧最多 `redetect_budget` 个；refined box 与预测框 IoU≥0.20 才算成功；超预算只 miss+1 不累加 attempts；
 - AUTO 适配器：EVAL_INTERVAL=30、NIS>8.0、P 条件数>1000、miss 率>0.5、Cholesky 失败>2、hysteresis=2 次投票才切换；
+- **MCUKF IRLS 修正**（2026-11-25 修复分支已验证、待 PR 合并；Python / Rust 双側须同契约，详见 [mcukf-irls-correction](mcukf-irls-correction.md)）：
+  - z_pred / Pzz / Pxz 恒为标准 UT（Wm/Wc 不变），核权**不得**替换 UT 权（旧实现因此增益坍缩，已废弃）；
+  - 每通道核权 c_j = clip(exp(-y_j²/(2σ²)), 1e-4, 1)（c_min=1e-4 限制 R_eff / S 条件数），y = R^{-1/2}·residual_t；residual_t = z − (z_pred + H(x_iter − x_pred)) 每轮在当前迭代点重算（对角 R 白化，σ 无量纲）；
+  - R_eff = R·C⁻¹（C = diag(c)），K = Pxz·(Pzz + R_eff)⁻¹；每轮 x_new = x_pred + K(z − z_pred)（自 x_pred 重算，不累加）；IRLS 最多 3 次，‖x_new − x_iter‖ 阈值 1e-6，达上限采用最后一轮的 x_new / K / R_eff（同轮一致）；
+  - Joseph 协方差更新使用同一 R_eff；AUTO / NIS 一律使用原始 S0 = Pzz + R（不用 R_eff）；
+  - 退化路径：大 σ 或零残差 → 标准 UKF；强离群 → K → 0 且 P → 预测协方差；S = Pzz + R_eff 奇异语义与 UKF 一致（Python 异常 / Rust RuntimeError 向上传播）；
+  - σ 默认 1.0，GUI 0.5–3.0，旧配置超出范围由 loader 回退 1.0；普通噪声下不恒等于 UKF（R 白化使正常帧按信噪比降权，属有意保守性），σ 需场景标定，非有限输入不承诺；对比 S0 白化 σ≈2，R 白化 + σ=1.0 离群抑制更好且正常/真实突变恢复无显著劣势；
 - 匈牙利确定性：矩形代价补零成方阵，与 scipy `linear_sum_assignment` 数学等价；tie-break 行优先、严格小于才更新；
 - Bhattacharyya：任一侧直方图缺失返回 0.5；公式按 float64 复刻 cv2（cv2 内部 float32，交叉验证差 ~3e-9）。
 
