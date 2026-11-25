@@ -48,8 +48,8 @@ pub struct KalmanFilter {
     pub q: Mat8,
     pub r: Mat4,
     pub velocity_clip: f64,
-    kernel_sigma: f64,
-    max_iter: usize,
+    kernel_sigma: f64, // 相关熵核带宽 σ（固定值，无尺寸缩放）
+    max_iter: usize,   // 不动点迭代上限（默认 3）
     wm: [f64; N_SIGMA],
     wc: [f64; N_SIGMA],
     // AUTO 自适应监控属性
@@ -358,110 +358,107 @@ impl KalmanFilter {
         Ok(self.to_box())
     }
 
-    /// MCUKF 更新：相关熵加权 + 不动点迭代 + Joseph 形式协方差。
+    /// MCUKF 更新：Wm/Wc 标准无迹变换 + 相关熵 R_eff 不动点迭代 + Joseph 协方差。
+    ///
+    /// 冻结契约（逐行对应 Python `_DetectionMCUKF.correct`）：
+    /// 1. 标准 Wm/Wc 无迹变换得 z_pred / Pzz / Pxz，S0 = Pzz + R 仅用于原始 NIS；
+    /// 2. 最多 max_iter 轮不动点迭代：residual = z - (z_pred + H (x_iter - x_pred))，
+    ///    y 按名义 R 对角 std 白化，c = clip(exp(-y²/(2σ²)), 1e-4, 1)，
+    ///    R_eff = R C⁻¹（对角），K = Pxz (Pzz + R_eff)⁻¹，x_new = x_pred + K (z - z_pred)；
+    /// 3. 位移 < 1e-6 接受并停止；达到上限使用最后鲁棒迭代的 K / R_eff / x；
+    /// 4. 最终 Joseph 用同一 K / R_eff，NIS 用原始 r0 / S0；核带宽 σ 无尺寸缩放。
     fn correct_mcukf(&mut self, box_: &BBox) -> Result<BBox, String> {
         let (cx, cy, w, h) = box_to_cxcywh(box_);
         let z = Vec8::from_row_slice(&[cx, cy, w, h, 0.0, 0.0, 0.0, 0.0]);
         self.make_r(w, h);
-        let sigma = (self.kernel_sigma.min(w.min(h) * 0.5)).max(0.05);
+        let sigma = self.kernel_sigma;
         let two_sigma_sq = 2.0 * sigma * sigma;
 
         let sigmas = self.sigma_points();
         let x_pred = self.x;
         let p_pred = self.p;
 
-        let mut k = Mat84::zeros();
+        // 标准 Wm/Wc 无迹变换：观测均值 z_pred、观测协方差 Pzz、交叉协方差 Pxz
         let mut z_pred = SVector::<f64, 4>::zeros();
-        let mut s = Mat4::identity();
-        let mut x_prev = Vec8::zeros();
-        for iteration in 0..self.max_iter {
-            // 每个 sigma 点的观测残差与核权重
-            let mut kernel_w = [0.0f64; N_SIGMA];
-            for j in 0..N_SIGMA {
-                let mut res_sq = 0.0;
-                for i in 0..4 {
-                    let d = z[i] - sigmas[(i, j)];
-                    res_sq += d * d;
-                }
-                kernel_w[j] = (-res_sq / two_sigma_sq).exp();
+        for j in 0..N_SIGMA {
+            for i in 0..4 {
+                z_pred[i] += self.wm[j] * sigmas[(i, j)];
             }
-            kernel_w[0] = kernel_w[0].max(1e-10); // 中心点保底
-            let total: f64 = kernel_w.iter().sum();
-            if total < 1e-10 {
-                for item in kernel_w.iter_mut() {
-                    *item = 1.0 / N_SIGMA as f64;
-                }
-            } else {
-                for item in kernel_w.iter_mut() {
-                    *item /= total;
-                }
+        }
+        let mut pzz = Mat4::zeros();
+        let mut pxz = Mat84::zeros();
+        for j in 0..N_SIGMA {
+            let mut dz = SVector::<f64, 4>::zeros();
+            for i in 0..4 {
+                dz[i] = sigmas[(i, j)] - z_pred[i];
             }
-            // 加权观测均值
-            let mut zp = SVector::<f64, 4>::zeros();
-            for j in 0..N_SIGMA {
-                for i in 0..4 {
-                    zp[i] += kernel_w[j] * sigmas[(i, j)];
-                }
+            pzz += self.wc[j] * (dz * dz.transpose());
+            let dx = sigmas.column(j) - x_pred;
+            pxz += self.wc[j] * (dx * dz.transpose());
+        }
+        // 原始创新协方差 S0 = Pzz + R，仅用于 NIS 统计
+        let s0 = pzz + self.r;
+
+        // 相关熵 R_eff 不动点迭代（最多 max_iter 轮）
+        let mut k = Mat84::zeros();
+        let mut r_eff = Mat4::zeros();
+        let mut x_iter = x_pred;
+        for _ in 0..self.max_iter {
+            // residual = z - (z_pred + H (x_iter - x_pred))，H 取状态前 4 维
+            let mut residual = SVector::<f64, 4>::zeros();
+            for i in 0..4 {
+                residual[i] = z[i] - (z_pred[i] + x_iter[i] - x_pred[i]);
             }
-            z_pred = zp;
-            // S 与 Pxz
-            let mut s_it = self.r;
-            let mut pxz = Mat84::zeros();
-            for j in 0..N_SIGMA {
-                let mut dz = SVector::<f64, 4>::zeros();
-                for i in 0..4 {
-                    dz[i] = sigmas[(i, j)] - z_pred[i];
-                }
-                s_it += kernel_w[j] * (dz * dz.transpose());
-                // dx = sigmas - self.x（注意用当前 x，而非 x_pred）
-                let dx = sigmas.column(j) - self.x;
-                pxz += kernel_w[j] * (dx * dz.transpose());
+            // y 按名义 R 对角 std 白化，C = diag(c)，R_eff = R C⁻¹（对角）
+            r_eff = Mat4::zeros();
+            for i in 0..4 {
+                let y = residual[i] / self.r[(i, i)].sqrt();
+                let c = (-y * y / two_sigma_sq).exp().clamp(1e-4, 1.0);
+                r_eff[(i, i)] = self.r[(i, i)] / c;
             }
-            s = s_it;
-            let s_inv = s
-            .try_inverse()
-            .ok_or_else(|| "UKF correct: innovation covariance S is singular".to_string())?;
+            let s_r = pzz + r_eff;
+            let s_inv = s_r
+                .try_inverse()
+                .ok_or_else(|| "UKF correct: innovation covariance S is singular".to_string())?;
             k = pxz * s_inv;
+            let x_old = x_iter;
             let mut x_new = x_pred;
             for i in 0..8 {
-                let mut upd = 0.0;
-                for jj in 0..4 {
-                    upd += k[(i, jj)] * (z[jj] - z_pred[jj]);
-                }
-                x_new[i] += upd;
-            }
-            self.x = x_new;
-            if iteration > 0 {
-                let mut norm = 0.0;
-                for i in 0..8 {
-                    let d = self.x[i] - x_prev[i];
-                    norm += d * d;
-                }
-                if norm.sqrt() < 1e-6 {
-                    break;
+                for j in 0..4 {
+                    x_new[i] += k[(i, j)] * (z[j] - z_pred[j]);
                 }
             }
-            x_prev = self.x;
+            x_iter = x_new;
+            // 位移 < 1e-6 接受并停止；达到上限自然使用最后鲁棒迭代
+            let mut norm_sq = 0.0;
+            for i in 0..8 {
+                let d = x_new[i] - x_old[i];
+                norm_sq += d * d;
+            }
+            if norm_sq.sqrt() < 1e-6 {
+                break;
+            }
         }
+        self.x = x_iter;
 
-        // 创新息统计
+        // 创新息统计：原始 r0 = z - z_pred，S0 = Pzz + R
         let mut innov_sq = 0.0;
         for i in 0..4 {
             let d = z[i] - z_pred[i];
             innov_sq += d * d;
         }
         self.last_innovation_sq = innov_sq;
-        self.last_s_trace = s.trace();
+        self.last_s_trace = s0.trace();
         let nis = self.last_innovation_sq / self.last_s_trace.max(1e-10);
         self.adapt_q(nis);
 
-        // Joseph 形式协方差更新
+        // Joseph 形式协方差更新（同一 K / R_eff）
         let mut h = Mat84::zeros();
         for i in 0..4 {
             h[(i, i)] = 1.0;
         }
         let i_kh = Mat8::identity() - k * h.transpose();
-        self.p = i_kh * p_pred * i_kh.transpose() + k * self.r * k.transpose();
+        self.p = i_kh * p_pred * i_kh.transpose() + k * r_eff * k.transpose();
         Self::symmetrize(&mut self.p);
         self.clip_state();
         self.clip_p_variance();

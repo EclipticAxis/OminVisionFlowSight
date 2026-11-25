@@ -293,93 +293,81 @@ class _DetectionUKF:
 
 
 class _DetectionMCUKF(_DetectionUKF):
-    """最大相关熵 UKF（Maximum Correntropy UKF）。
+    """创新域 IRLS-MCC UKF（Innovation-Domain IRLS Maximum Correntropy UKF）。
 
-    在标准 UKF 基础上，用高斯核函数 exp(-e²/2σ²) 加权每个 sigma 点的观测残差，
-    自动降低大误差（离群检测框）的影响。对脉冲噪声、遮挡跳变、YOLO 误检鲁棒。
-
-    与标准 UKF 的区别仅在 correct()：
-    - 残差通过高斯核加权 → 离群观测自动降权
-    - 不动点迭代（默认 3 次）收敛状态估计
-    - Joseph 形式协方差更新保证数值稳定性
+    不动点迭代完全在观测创新域进行（观测模型为线性 H，取前 4 状态）：
+    - sigma 点与 z_pred/Pzz/Pxz 全部用基类 Wm/Wc 无迹变换，与标准 UKF 一致
+    - 每轮以创新残差 y_j = e_j/√R_jj 经高斯核 c_j = exp(-y_j²/2σ²) 构造
+      有效观测噪声 R_eff = R·diag(1/c)，对大创新分量等效降权（IRLS-MCC）。
+      R 必须为对角矩阵；核权下限 1e-4 避免有效协方差条件数过大。
+    - 不动点迭代（默认 max_iter=3 轮）收敛（位移 < 1e-6）或达到上限后，
+      用同一 K / R_eff 做 Joseph 形式协方差更新，无均匀权/标准 UKF 回退
+    - self.r 始终为名义 R；原始 S0 = Pzz + R 的 NIS 供 AUTO 适配器
     """
 
-    def __init__(self, box: np.ndarray, kernel_sigma: float = 0.4, max_iter: int = 3,
+    def __init__(self, box: np.ndarray, kernel_sigma: float = 1.0, max_iter: int = 3,
                  velocity_clip: float = 0.30):
         super().__init__(box, velocity_clip=velocity_clip)
         self._kernel_sigma = float(max(0.01, kernel_sigma))
         self._max_iter = int(max(1, max_iter))
 
     def correct(self, box: np.ndarray) -> np.ndarray:
-        """MCUKF 更新：相关熵加权 + 不动点迭代 + Joseph 形式协方差。"""
+        """MCUKF 更新：创新域 IRLS-MCC 不动点迭代 + Joseph 形式协方差。"""
         cx, cy, w, h = _box_to_cxcywh(box)
         z = np.array([[cx], [cy], [w], [h]], dtype=np.float64)
 
-        # 按目标尺度自适应观测噪声 R 与核带宽 σ
+        # 名义观测噪声 R（self.r 始终保持名义值）
         self.r = self._make_r(w, h)
-        sigma = max(0.05, min(self._kernel_sigma, min(w, h) * 0.5))
-        two_sigma_sq = 2.0 * sigma ** 2
+        r0 = self.r
 
         sigmas = self._sigma_points()
-        z_sigmas = sigmas[0:4, :]                        # (4, 17) 观测传播
+        H = np.zeros((4, 8), dtype=np.float64)
+        H[:4, :4] = np.eye(4)
+        z_sigmas = sigmas[0:4, :]                      # (4, 17) 观测传播
 
-        x_pred = self.x.copy()                           # 保存预测状态
-        p_pred = self.p.copy()                           # 保存预测协方差
+        # 无迹变换：与基类完全一致的 Wm/Wc 加权
+        z_pred = (self._wm * z_sigmas).sum(axis=1, keepdims=True)  # (4, 1)
+        dz = z_sigmas - z_pred                         # (4, 17)
+        Pzz = (dz * self._wc) @ dz.T                   # (4, 4)
+        dx = sigmas - self.x                           # (8, 17)
+        Pxz = (dx * self._wc) @ dz.T                   # (8, 4)
 
-        K = None
-        z_pred = None
-        for iteration in range(self._max_iter):
-            # 每个 sigma 点的观测残差
-            residuals = z - z_sigmas                     # (4, 17)
-            residual_sq = np.sum(residuals ** 2, axis=0) # (17,) ||e_i||²
-
-            # 高斯核加权
-            kernel_w = np.exp(-residual_sq / two_sigma_sq)
-            kernel_w[0] = max(kernel_w[0], 1e-10)        # 中心点保底
-            total = kernel_w.sum()
-            if total < 1e-10:
-                kernel_w = np.full_like(kernel_w, 1.0 / len(kernel_w))
-            else:
-                kernel_w = kernel_w / total
-
-            # 加权观测均值
-            z_pred = (kernel_w * z_sigmas).sum(axis=1, keepdims=True)  # (4, 1)
-
-            # 加权观测协方差 S
-            dz = z_sigmas - z_pred                       # (4, 17)
-            S = (dz * kernel_w) @ dz.T + self.r          # (4, 4)
-
-            # 加权交叉协方差 Pxz
-            dx = sigmas - self.x                         # (8, 17)
-            Pxz = (dx * kernel_w) @ dz.T                 # (8, 4)
-
-            # Kalman 增益
-            K = Pxz @ np.linalg.inv(S)                   # (8, 4)
-
-            # 状态更新
-            self.x = x_pred + K @ (z - z_pred)
-
-            # 收敛检查
-            if iteration > 0 and np.linalg.norm(self.x - x_prev) < 1e-6:
-                break
-            x_prev = self.x.copy()
-
-        if K is None or z_pred is None:
-            K = np.zeros((8, 4), dtype=np.float64)
-            z_pred = (self._wm * z_sigmas).sum(axis=1, keepdims=True)
-
-        # 记录创新息统计（供 AUTO 适配器使用）
+        # 原始（名义）创新统计：仅用于 NIS / AUTO 适配
+        S0 = Pzz + r0                                  # (4, 4)
         innovation = z - z_pred
         self.last_innovation_sq = float(np.sum(innovation ** 2))
-        self.last_s_trace = float(np.trace(S)) if 'S' in locals() else 1.0
+        self.last_s_trace = float(np.trace(S0))
         nis = self.last_innovation_sq / max(self.last_s_trace, 1e-10)
         self._adapt_q(nis)
 
-        # Joseph 形式协方差更新（数值稳定）
-        H = np.zeros((4, 8), dtype=np.float64)
-        H[:4, :4] = np.eye(4)
-        I_KH = np.eye(8, dtype=np.float64) - K @ H
-        self.p = I_KH @ p_pred @ I_KH.T + K @ self.r @ K.T
+        x_pred = self.x.copy()                         # 保存预测状态
+        p_pred = self.p.copy()                         # 保存预测协方差
+
+        sigma_sq = self._kernel_sigma ** 2
+        r_diag = np.diag(r0)                           # 名义 R 的对角元
+
+        # 创新域 IRLS-MCC 不动点迭代（max_iter >= 1，K/R_eff 始终有定义）
+        x_iter = x_pred
+        x_new = x_pred
+        K = np.zeros((self._N, 4), dtype=np.float64)
+        R_eff = r0.copy()
+        for _ in range(self._max_iter):
+            # 当前迭代点的线性化创新残差
+            residual = z - (z_pred + H @ (x_iter - x_pred))     # (4, 1)
+            y = residual.flatten() / np.sqrt(np.maximum(r_diag, 1e-12))
+            c = np.clip(np.exp(-y ** 2 / (2.0 * sigma_sq)), 1e-4, 1.0)
+            R_eff = r0 @ np.diag(1.0 / c)                        # (4, 4)
+            K = Pxz @ np.linalg.inv(Pzz + R_eff)                 # (8, 4)
+            x_new = x_pred + K @ (z - z_pred)                    # (8, 1)
+            if np.linalg.norm(x_new - x_iter) < 1e-6:
+                break                                    # 收敛：接受当前解
+            x_iter = x_new
+
+        self.x = x_new
+
+        # Joseph 形式协方差更新（数值稳定），使用同一 K / R_eff
+        I_KH = np.eye(self._N, dtype=np.float64) - K @ H
+        self.p = I_KH @ p_pred @ I_KH.T + K @ R_eff @ K.T
 
         # 对称化 + 按分量上限裁剪
         self.p = (self.p + self.p.T) * 0.5
@@ -488,7 +476,7 @@ class _FilterAdaptor:
     _CHOLESKY_FAIL_THRESHOLD = 2  # Cholesky 失败次数阈值
     _HYSTERESIS = 2               # 连续 N 次评估一致才切换（防抖）
 
-    def __init__(self, kernel_sigma: float = 0.4):
+    def __init__(self, kernel_sigma: float = 1.0):
         self._kernel_sigma = kernel_sigma
         self._current_type = "ukf"
         self._nis_window: list[float] = []
@@ -571,7 +559,7 @@ class _Track:
     )
 
     def __init__(self, track_id: int, label: str, box: np.ndarray, confidence: float, keypoints: list[dict],
-                 filter_type: str = "ukf", mcukf_kernel_sigma: float = 0.4,
+                 filter_type: str = "ukf", mcukf_kernel_sigma: float = 1.0,
                  polygon: list[tuple[float, float]] | None = None,
                  velocity_clip: float = 0.30):
         self.track_id = track_id
@@ -617,7 +605,7 @@ class _Track:
             d["polygon"] = [[float(x), float(y)] for x, y in self.polygon]
         return d
 
-    def swap_filter(self, filter_type: str, kernel_sigma: float = 0.4) -> None:
+    def swap_filter(self, filter_type: str, kernel_sigma: float = 1.0) -> None:
         """热切换滤波器类型，保留状态 (x, P, Q, R)。
 
         用于 AUTO 模式下自适应切换：创建新类型滤波器实例，
@@ -769,7 +757,7 @@ class DetectionTracker:
         redetect_max_retries: int = 2,
         redetect_iou_threshold: float = 0.20,
         filter_type: str = "ukf",
-        mcukf_kernel_sigma: float = 0.25,
+        mcukf_kernel_sigma: float = 1.0,
         matching_strategy: str = "hungarian",
         high_conf_thresh: float = 0.5,
         velocity_clip: float = 0.30,

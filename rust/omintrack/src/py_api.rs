@@ -180,7 +180,7 @@ impl RustTracker {
     #[new]
     #[pyo3(signature = (iou_threshold=0.25, max_misses=4, smooth_alpha=0.85, min_hits_to_show=1,
                         redetect_enabled=false, redetect_max_retries=2, redetect_iou_threshold=0.20,
-                        filter_type="ukf", mcukf_kernel_sigma=0.25, matching_strategy="hungarian",
+                        filter_type="ukf", mcukf_kernel_sigma=1.0, matching_strategy="hungarian",
                         high_conf_thresh=0.5, velocity_clip=0.30, second_stage_iou_min=0.1,
                         redetect_budget=1))]
     #[allow(clippy::too_many_arguments)]

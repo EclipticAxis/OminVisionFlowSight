@@ -479,7 +479,7 @@ class InferWorker(QThread):
         self._reid_stride = 3
         # 滤波器类型配置
         self._filter_type = "ukf"
-        self._mcukf_kernel_sigma = 0.25
+        self._mcukf_kernel_sigma = 1.0
         # 跟踪器匹配策略参数
         self._iou_threshold = 0.25
         self._max_misses = 4

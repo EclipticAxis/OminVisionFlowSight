@@ -281,7 +281,7 @@ impl Default for TrackerParams {
             redetect_max_retries: 2,
             redetect_iou_threshold: 0.20,
             filter_type: "ukf".to_string(),
-            mcukf_kernel_sigma: 0.25,
+            mcukf_kernel_sigma: 1.0, // 相关熵核带宽 σ 默认值（无尺寸缩放）
             matching_strategy: "hungarian".to_string(),
             high_conf_thresh: 0.5,
             velocity_clip: 0.30,

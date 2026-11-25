@@ -1,4 +1,5 @@
 import importlib.util
+import math
 import logging
 from pathlib import Path
 
@@ -77,7 +78,7 @@ class SettingsDialog(QDialog):
     _RECOMMENDED_REDETECT_ROI_PAD = 0.15
     _RECOMMENDED_FILTER_TYPE = "ukf"
     _RECOMMENDED_TRACKER_BACKEND = "auto"
-    _RECOMMENDED_MCUKF_KERNEL_SIGMA = 0.25
+    _RECOMMENDED_MCUKF_KERNEL_SIGMA = 1.0
     _RECOMMENDED_DENOISE_METHOD = "none"
     _RECOMMENDED_DENOISE_STRENGTH = 5
     _RECOMMENDED_MATCHING_STRATEGY = "hungarian"
@@ -222,7 +223,7 @@ class SettingsDialog(QDialog):
         layout.addLayout(self._create_spin_row("ROI 扩展系数", self._ai_redetect_roi_pad, 0.0, 0.5, 0.05, "_roi_pad_spin"))
         layout.addLayout(self._create_filter_type_row())
         layout.addLayout(self._create_tracker_backend_row())
-        layout.addLayout(self._create_spin_row("MCUKF 核带宽", self._ai_mcukf_sigma, 0.1, 2.0, 0.05, "_mcukf_sigma_spin"))
+        layout.addLayout(self._create_spin_row("MCUKF 核带宽", self._ai_mcukf_sigma, 0.5, 3.0, 0.25, "_mcukf_sigma_spin"))
         layout.addLayout(self._create_matching_strategy_row())
         layout.addLayout(self._create_spin_row("IoU 匹配阈值", self._ai_iou_threshold, 0.10, 0.60, 0.05, "_iou_threshold_spin"))
         layout.addLayout(self._create_spin_row("最大丢失帧数", self._ai_max_misses, 1, 10, 1, "_max_misses_spin"))
@@ -849,7 +850,7 @@ class SettingsDialog(QDialog):
         redetect_retries: int = 2,
         redetect_roi_pad: float = 0.15,
         filter_type: str = "ukf",
-        mcukf_kernel_sigma: float = 0.4,
+        mcukf_kernel_sigma: float = 1.0,
         denoise_method: str = "none",
         denoise_strength: int = 5,
         matching_strategy: str = "hungarian",
@@ -1016,9 +1017,14 @@ class SettingsDialog(QDialog):
         settings = QSettings(SettingsDialog._SETTINGS_ORG, SettingsDialog._SETTINGS_APP)
         val = settings.value(SettingsDialog._KEY_AI_MCUKF_KERNEL_SIGMA, SettingsDialog._RECOMMENDED_MCUKF_KERNEL_SIGMA)
         try:
-            return float(val)
+            sigma = float(val)
         except Exception:
             return SettingsDialog._RECOMMENDED_MCUKF_KERNEL_SIGMA
+        # 无量纲核带宽新语义：仅保留合法有限值；旧配置（如 0.25）超出新范围
+        # [0.5, 3.0]，统一回落到推荐值 1.0，避免旧值原样进入新语义。
+        if not math.isfinite(sigma) or not (0.5 <= sigma <= 3.0):
+            return SettingsDialog._RECOMMENDED_MCUKF_KERNEL_SIGMA
+        return sigma
 
     @staticmethod
     def load_ai_denoise_method() -> str:
