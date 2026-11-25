@@ -1,6 +1,6 @@
 # MCUKF + Manifold UKF 实现方案
 
-> **勘误（2026-11-25，修复分支待 PR 合并）**：本文 §2.1 / §5.1 / §6 中 MCUKF 的伪码与 σ 语义**已被新实现取代**。旧写法把归一化凸核权误当 UT 的 Wm/Wc 使用，导致增益坍缩与假迭代；σ 按量测噪声 std 倍数取值的推荐（默认 0.4）随之失效。权威行为契约见 [mcukf-irls-correction](mcukf-irls-correction.md)。Manifold UKF（§2.2 / §5.2）部分不受影响。
+> **勘误（2026-11-25，已合入 main（PR #18 → a81ce34））**：本文 §2.1 / §5.1 / §6 中 MCUKF 的伪码与 σ 语义**已被新实现取代**。旧写法把归一化凸核权误当 UT 的 Wm/Wc 使用，导致增益坍缩与假迭代；σ 按量测噪声 std 倍数取值的推荐（默认 0.4）随之失效。权威行为契约见 [mcukf-irls-correction](mcukf-irls-correction.md)。Manifold UKF（§2.2 / §5.2）部分不受影响。
 
 ## 一、需求
 

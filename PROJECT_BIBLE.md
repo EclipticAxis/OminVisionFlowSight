@@ -901,7 +901,7 @@ MainWindow.closeEvent()
 | 2026-11-22 | 默认行为变更：跟踪后端 auto 默认 + ReID 默认启用（[设计](docs/default-backends.md) 1.0：backend 缺省 python→auto 含 OSError 回退、GUI `ai/tracker_backend` 键与 Rust 项 find_spec 门控、ReID 三态默认加载尊重主动关闭、推荐恢复=随仓库模型；既有测试 Python 对拍侧显式 `backend="python"` 适配，新增 16 项） | ✅ PR #9 → `7f78651` |
 | 2026-11-22 | OnnxYoloBackend 完整支持 OBB（[设计](docs/obb-onnx-backend.md) 1.0：20 通道布局 angle 末通道弧度 + xywhr2xyxyxyxy 逐行对齐 ultralytics、逐点反映射、bbox=polygon 外接矩形、外接矩形 NMS≈rotated NMS 近似、label 取 onnx metadata names、`_load_onnx_detect_model` 任务推断接通、预处理 BGR→RGB 修正；同帧对拍 valid 165/178、IoU mean 0.989、polygon dev<0.014；新增 12 项，全套件 1378 项全绿） | ✅ PR #10 → `95f9ac9` |
 | 2026-11-22 | 精确 Polygon IoU 双側自实现（[设计](docs/precise-polygon-iou.md) 1.0：Sutherland-Hodgman 凸裁剪 + shoelace 面积替换 shapely/外接矩形静默降级，消除 §3.4 shapely 环境分歧；双側逐行同算法 1e-9 对拍，新增 13 项测试；13 场景 golden 重生成逐字节不变） | ✅ PR #14 → `e43c46c` |
-| 2026-11-25 | MCUKF 创新域 IRLS-MCC 修复：[设计](docs/mcukf-irls-correction.md)（标准 UT 矩 + R 白化逐通道 R_eff + 真实迭代 + 同 R_eff Joseph；Python/Rust 同步，默认无量纲 σ=1.0；新增 IRLS 11 项，全套件 1554 项通过，MOT17 对照无额外退化） | ✅ 修复分支已验证（待 PR 合并） |
+| 2026-11-25 | MCUKF 创新域 IRLS-MCC 修复：[设计](docs/mcukf-irls-correction.md)（标准 UT 矩 + R 白化逐通道 R_eff + 真实迭代 + 同 R_eff Joseph；Python/Rust 同步，默认无量纲 σ=1.0；新增 IRLS 11 项，全套件 1554 项通过，MOT17 对照无额外退化） | ✅ 已合入 main（PR #18 → a81ce34） |
 
 ### 11.3 已知问题
 

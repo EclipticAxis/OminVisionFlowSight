@@ -2,7 +2,7 @@
 
 > **版本**：1.0 — 2026-11-25
 > **范围**：`ai/tracker.py` / `rust/omintrack/` 中 `_DetectionMCUKF` 的 update 行为修正；替代 [mcukf-manifold-ukf-plan](mcukf-manifold-ukf-plan.md) §2.1 / §5.1 / §6 中的旧 MCUKF 伪码与 σ 语义；`docs/rust-tracker-core.md` §3.2 新增对应行为契约。
-> **状态**：修复分支已验证（待 PR 合并）：Rust release 重建成功；新增 IRLS 11 项、Rust 等价 18 项、快照 14 项、配置 23 项及全套件 1554 项通过；MOT17 公共序列对照见 §4
+> **状态**：已合入 main（PR #18 → a81ce34）：Rust release 重建成功；新增 IRLS 11 项、Rust 等价 18 项、快照 14 项、配置 23 项及全套件 1554 项通过；MOT17 公共序列对照见 §4
 
 ---
 
