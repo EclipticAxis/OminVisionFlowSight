@@ -483,6 +483,7 @@ class InferWorker(QThread):
         # 跟踪器匹配策略参数
         self._iou_threshold = 0.25
         self._max_misses = 4
+        self._max_output_misses = 0
         self._matching_strategy = "hungarian"
         self._high_conf_thresh = 0.5
         self._velocity_clip = 0.30
@@ -844,6 +845,7 @@ class InferWorker(QThread):
         *,
         iou_threshold: float | None = None,
         max_misses: int | None = None,
+        max_output_misses: int | None = None,
         matching_strategy: str | None = None,
         high_conf_thresh: float | None = None,
         velocity_clip: float | None = None,
@@ -854,6 +856,8 @@ class InferWorker(QThread):
             self._iou_threshold = float(iou_threshold)
         if max_misses is not None:
             self._max_misses = int(max_misses)
+        if max_output_misses is not None:
+            self._max_output_misses = max(0, int(max_output_misses))
         if matching_strategy is not None:
             self._matching_strategy = str(matching_strategy)
         if high_conf_thresh is not None:
@@ -866,6 +870,7 @@ class InferWorker(QThread):
             tracker.set_tracker_params(
                 iou_threshold=self._iou_threshold,
                 max_misses=self._max_misses,
+                max_output_misses=self._max_output_misses,
                 matching_strategy=self._matching_strategy,
                 high_conf_thresh=self._high_conf_thresh,
                 velocity_clip=self._velocity_clip,
@@ -873,8 +878,9 @@ class InferWorker(QThread):
             )
         self._clear_slot_caches()
         logging.info(
-            "Tracker params: strategy=%s iou=%.2f misses=%d vel_clip=%.2f",
-            self._matching_strategy, self._iou_threshold, self._max_misses, self._velocity_clip,
+            "Tracker params: strategy=%s iou=%.2f misses=%d output_misses=%d vel_clip=%.2f",
+            self._matching_strategy, self._iou_threshold, self._max_misses,
+            self._max_output_misses, self._velocity_clip,
         )
 
     def set_denoise(self, method: str, strength: int = 5) -> None:
@@ -2103,6 +2109,7 @@ class InferWorker(QThread):
                     mcukf_kernel_sigma=self._mcukf_kernel_sigma,
                     iou_threshold=self._iou_threshold,
                     max_misses=self._max_misses,
+                    max_output_misses=self._max_output_misses,
                     matching_strategy=self._matching_strategy,
                     high_conf_thresh=self._high_conf_thresh,
                     velocity_clip=self._velocity_clip,

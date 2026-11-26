@@ -45,6 +45,7 @@ class RustDetectionTracker:
         reid_backend=None,
         reid_min_tracks: int = 3,
         reid_stride: int = 3,
+        max_output_misses: int = 0,
     ):
         import omintrack  # 延迟导入：未安装扩展时不影响 Python 后端
 
@@ -63,6 +64,7 @@ class RustDetectionTracker:
             velocity_clip=velocity_clip,
             second_stage_iou_min=second_stage_iou_min,
             redetect_budget=redetect_budget,
+            max_output_misses=max_output_misses,
         )
         self._reid_backend = reid_backend
         self._reid_min_tracks = int(reid_min_tracks)
@@ -206,6 +208,7 @@ class RustDetectionTracker:
         high_conf_thresh: float | None = None,
         velocity_clip: float | None = None,
         second_stage_iou_min: float | None = None,
+        max_output_misses: int | None = None,
     ) -> None:
         self._core.set_tracker_params(
             iou_threshold=iou_threshold,
@@ -214,6 +217,7 @@ class RustDetectionTracker:
             high_conf_thresh=high_conf_thresh,
             velocity_clip=velocity_clip,
             second_stage_iou_min=second_stage_iou_min,
+            max_output_misses=max_output_misses,
         )
 
     # ------------------------------------------------------------------
