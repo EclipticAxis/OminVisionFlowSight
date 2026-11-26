@@ -1,8 +1,8 @@
 # 预测输出门控与轨迹生命周期解耦
 
-> **版本**：1.0 — 2026-11-26
-> **范围**：`ai/tracker.py`、`ai/tracker_backend.py`、`ai/inference.py`、`rust/omintrack/src/tracker.rs`、`rust/omintrack/src/py_api.rs`、跟踪快照及新增门控测试。
-> **状态**：待合入 main（基于 `4a1eb95` 的工作树）；Rust release 重建通过，双端专项 32 项、快照 14 项、全套件 1415 项通过；MOT17 FRCNN 七序列复验完成。
+> **版本**：1.1 — 2026-11-26
+> **范围**：`ai/tracker.py`、`ai/tracker_backend.py`、`ai/inference.py`、`rust/omintrack/src/tracker.rs`、`rust/omintrack/src/py_api.rs`、`gui/settings_dialog.py`、`gui/main_window.py`、跟踪快照及新增门控测试。
+> **状态**：待合入 main（基于 `4a1eb95` 的工作树）；Rust release 重建通过，双端专项 36 项、GUI 9 项、InferWorker 16 项、快照 14 项、全套件 1429 项通过；MOT17 FRCNN 七序列复验完成。
 
 ## 1. 目标与背景
 
@@ -33,6 +33,9 @@ MOT17 FRCNN 七序列基线显示，UKF 从 stride 1 到 stride 5 的新增误�
 
 后续 correct()
   └─ misses 复位为 0 → 原 track_id 恢复可见
+
+SettingsDialog「预测输出保留帧数」
+  └─ QSettings ai/max_output_misses → MainWindow → InferWorker → DetectionTracker
 ```
 
 默认配置下，最后成功匹配后的当前推理间隔内，`misses=0` 的跳帧预测仍正常输出；第一次 unmatched 推理帧使 `misses=1`，预测框停止输出，但内部轨迹仍保留到原来的过期时间。后续匹配成功可恢复原 `track_id`，不会因输出门控强制新建轨迹。
@@ -47,9 +50,11 @@ MOT17 FRCNN 七序列基线显示，UKF 从 stride 1 到 stride 5 的新增误�
 | 首次推理 miss | 默认隐藏预测输出，但不删除内部轨迹 |
 | 重关联 | `correct()` 复位 misses，原 `track_id` 恢复输出；门控不改变匹配、ROI、ReID、AUTO 或滤波器状态 |
 | 运行时设置 | `DetectionTracker` / `RustDetectionTracker` / `RustTracker` / `InferWorker` 的 `set_tracker_params` 均支持同名可选参数；`None` 不改变现值 |
+| GUI 配置 | 「预测输出保留帧数」范围 0–10，持久化键 `ai/max_output_misses`；旧配置无键时默认 0。「内部轨迹保留帧数」对应原 `max_misses`，不再暗示它控制预测可见性 |
 | 兼容旧可见性 | 同时设置 `max_output_misses=max_misses`（默认两者为 0/4 时取 `max_output_misses=4`）恢复旧的持续预测输出 |
 | 输出 schema | 不新增或删除字段；只改变各帧可见的 track 集合 |
-| 双实现 | Python 与 Rust 使用相同条件 `hits >= min_hits && misses <= max_output_misses`，数值与状态机契约不变 |
+| 适用双端 | 仅 `DetectionTracker` 的 Python 与 Rust 实现，使用相同条件 `hits >= min_hits && misses <= max_output_misses`，数值与状态机契约不变 |
+| 范围边界 | `ai/rectangle_detector.py::RectangleTracker` 是独立功能线，本次不改变其 misses、预测输出或置信度衰减语义 |
 
 该改动不承诺消除所有 FP：新检测仍立即建轨，`min_hits_to_show=1` 不变；当前推理间隔内的预测也保留。它只阻止 unmatched 推理帧之后的陈旧预测继续输出。
 
@@ -57,11 +62,13 @@ MOT17 FRCNN 七序列基线显示，UKF 从 stride 1 到 stride 5 的新增误�
 
 ### 4.1 自动化验证
 
-- 新增 `tests/test_prediction_output_gating.py`：Python/Rust 各 3 项，覆盖默认隐藏、内部保留后原 ID 恢复、旧语义兼容、运行时 setter 与最终过期删除。
-- 双端专项：门控 6 项 + matching 8 项 + Rust 等价 18 项，共 **32 项通过**。
+- `tests/test_prediction_output_gating.py`：Python/Rust 各 5 项，覆盖默认隐藏、内部保留后原 ID 恢复、旧语义兼容、运行时 setter、最终过期删除、负数钳制及 `min_hits_to_show` 交互。
+- 双端专项：门控 10 项 + matching 8 项 + Rust 等价 18 项，共 **36 项通过**。
+- `tests/test_inferworker_resilience.py`：**16 项通过**，含 InferWorker 广播及后注册槽位继承。
+- `tests/test_settings_dialog_max_output_misses.py`：**9 项通过**，覆盖旧配置缺键、loader 钳制、确认保存、推荐恢复、spin tooltip 及 MainWindow 透传。
 - 快照：**14 项通过**；仅 AUTO 异常、混合置信度两场景、消失删除、重检测失败这 5 个含 miss 输出的 golden 按新契约重生成，meta 继续锁定内部 misses/state/attempts。
 - Rust：`maturin develop --release` 重建成功。
-- 全套件：**1415 项通过**。
+- 全套件：**1429 项通过**。
 
 ### 4.2 MOT17 真实数据验证
 
@@ -99,7 +106,7 @@ stride 5 的其余滤波器联合复验：
 ## 5. 维护指南
 
 - 不要把输出条件改回只检查 `max_misses`；内部重关联保留时间和预测输出可见性是独立契约。
-- 修改门控语义必须同步 Python/Rust、facade、InferWorker 透传、`tests/test_prediction_output_gating.py` 和 `tests/test_tracker_rust_equivalence.py`。
+- 修改门控语义必须同步 Python/Rust、facade、InferWorker 与 GUI 透传；行为回归放入 `tests/test_prediction_output_gating.py`，并运行 `tests/test_tracker_rust_equivalence.py` 等价套件。
 - 有意改变默认输出时，运行 `pytest tests/test_tracker_snapshot.py --update-golden` 并逐个审查 meta，确认只改变预期场景的可见性而非内部生命周期。
 - 修改 `rust/` 后必须执行 `venv\Scripts\python.exe -m maturin develop --manifest-path rust\omintrack\Cargo.toml --release`，再跑双端等价和全套件。
 - 后续优化新轨确认、置信度衰减或按视频帧计算 TTL 时，应作为新的行为契约单独设计，不要隐式改变本参数的 inference-miss 单位。
