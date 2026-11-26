@@ -57,6 +57,7 @@ class SettingsDialog(QDialog):
     _KEY_AI_MATCHING_STRATEGY = "ai/matching_strategy"
     _KEY_AI_IOU_THRESHOLD = "ai/iou_threshold"
     _KEY_AI_MAX_MISSES = "ai/max_misses"
+    _KEY_AI_MAX_OUTPUT_MISSES = "ai/max_output_misses"
     _KEY_AI_VELOCITY_CLIP = "ai/velocity_clip"
     _KEY_AI_HIGH_CONF_THRESH = "ai/high_conf_thresh"
     _KEY_AI_REDETECT_BUDGET = "ai/redetect_budget"
@@ -84,6 +85,7 @@ class SettingsDialog(QDialog):
     _RECOMMENDED_MATCHING_STRATEGY = "hungarian"
     _RECOMMENDED_IOU_THRESHOLD = 0.25
     _RECOMMENDED_MAX_MISSES = 4
+    _RECOMMENDED_MAX_OUTPUT_MISSES = 0
     _RECOMMENDED_VELOCITY_CLIP = 0.30
     _RECOMMENDED_HIGH_CONF_THRESH = 0.5
     _RECOMMENDED_REDETECT_BUDGET = 1
@@ -119,6 +121,7 @@ class SettingsDialog(QDialog):
         self._ai_matching_strategy = self.load_ai_matching_strategy()
         self._ai_iou_threshold = self.load_ai_iou_threshold()
         self._ai_max_misses = self.load_ai_max_misses()
+        self._ai_max_output_misses = self.load_ai_max_output_misses()
         self._ai_velocity_clip = self.load_ai_velocity_clip()
         self._ai_high_conf_thresh = self.load_ai_high_conf_thresh()
         self._ai_redetect_budget = self.load_ai_redetect_budget()
@@ -226,7 +229,10 @@ class SettingsDialog(QDialog):
         layout.addLayout(self._create_spin_row("MCUKF 核带宽", self._ai_mcukf_sigma, 0.5, 3.0, 0.25, "_mcukf_sigma_spin"))
         layout.addLayout(self._create_matching_strategy_row())
         layout.addLayout(self._create_spin_row("IoU 匹配阈值", self._ai_iou_threshold, 0.10, 0.60, 0.05, "_iou_threshold_spin"))
-        layout.addLayout(self._create_spin_row("最大丢失帧数", self._ai_max_misses, 1, 10, 1, "_max_misses_spin"))
+        layout.addLayout(self._create_spin_row("内部轨迹保留帧数", self._ai_max_misses, 1, 10, 1, "_max_misses_spin",
+                                               tooltip="仅控制内部轨迹过期：连续丢失超过该帧数后内部轨迹被删除；不影响预测框是否绘制。"))
+        layout.addLayout(self._create_spin_row("预测输出保留帧数", self._ai_max_output_misses, 0, 10, 1, "_max_output_misses_spin",
+                                               tooltip="仅控制预测框输出：连续丢失超过该帧数后不再绘制预测框（内部轨迹仍按“内部轨迹保留帧数”存活）。0 表示首次推理 miss 后立即隐藏；设为与内部轨迹保留帧数相同可恢复旧的可见性行为。"))
         layout.addLayout(self._create_spin_row("速度限幅", self._ai_velocity_clip, 0.10, 0.50, 0.05, "_velocity_clip_spin"))
         layout.addLayout(self._create_spin_row("级联高置信阈值", self._ai_high_conf_thresh, 0.30, 0.80, 0.05, "_high_conf_thresh_spin"))
         layout.addLayout(self._create_spin_row("重检测预算/帧", self._ai_redetect_budget, 1, 5, 1, "_redetect_budget_spin"))
@@ -273,12 +279,14 @@ class SettingsDialog(QDialog):
 
         root_layout.addLayout(btn_row)
 
-    def _create_spin_row(self, label: str, value: float, min_v: float, max_v: float, step: float, attr_name: str) -> QHBoxLayout:
+    def _create_spin_row(self, label: str, value: float, min_v: float, max_v: float, step: float, attr_name: str, tooltip: str = "") -> QHBoxLayout:
         row = QHBoxLayout()
         row.setSpacing(8)
         lbl = QLabel(label)
         lbl.setStyleSheet(f"color: {C['TEXT_SECONDARY']}; font-size: 9pt;")
         lbl.setFixedWidth(100)
+        if tooltip:
+            lbl.setToolTip(tooltip)
         row.addWidget(lbl)
 
         spin = WheelFocusDoubleSpinBox()
@@ -287,6 +295,8 @@ class SettingsDialog(QDialog):
         spin.setDecimals(2)
         spin.setValue(value)
         spin.setFixedHeight(36)
+        if tooltip:
+            spin.setToolTip(tooltip)
         setattr(self, attr_name, spin)
         row.addWidget(spin)
         return row
@@ -730,6 +740,8 @@ class SettingsDialog(QDialog):
         if idx >= 0:
             self._filter_type_combo.setCurrentIndex(idx)
         self._mcukf_sigma_spin.setValue(self._RECOMMENDED_MCUKF_KERNEL_SIGMA)
+        self._max_misses_spin.setValue(self._RECOMMENDED_MAX_MISSES)
+        self._max_output_misses_spin.setValue(self._RECOMMENDED_MAX_OUTPUT_MISSES)
         idx_dn = self._denoise_combo.findData(self._RECOMMENDED_DENOISE_METHOD)
         if idx_dn >= 0:
             self._denoise_combo.setCurrentIndex(idx_dn)
@@ -768,6 +780,8 @@ class SettingsDialog(QDialog):
             self._mcukf_sigma_spin.value(),
             self._denoise_combo.currentData() or "none",
             self._denoise_strength_spin.value(),
+            max_misses=int(self._max_misses_spin.value()),
+            max_output_misses=int(self._max_output_misses_spin.value()),
         )
         self._save_reid_model_settings(
             self._reid_model_combo.currentData() or "",
@@ -824,6 +838,7 @@ class SettingsDialog(QDialog):
             "matching_strategy": self._matching_strategy_combo.currentData() or "hungarian",
             "iou_threshold": float(self._iou_threshold_spin.value()),
             "max_misses": int(self._max_misses_spin.value()),
+            "max_output_misses": int(self._max_output_misses_spin.value()),
             "velocity_clip": float(self._velocity_clip_spin.value()),
             "high_conf_thresh": float(self._high_conf_thresh_spin.value()),
             "redetect_budget": int(self._redetect_budget_spin.value()),
@@ -856,6 +871,7 @@ class SettingsDialog(QDialog):
         matching_strategy: str = "hungarian",
         iou_threshold: float = 0.25,
         max_misses: int = 4,
+        max_output_misses: int = 0,
         velocity_clip: float = 0.30,
         high_conf_thresh: float = 0.5,
         redetect_budget: int = 1,
@@ -876,14 +892,15 @@ class SettingsDialog(QDialog):
         settings.setValue(self._KEY_AI_MATCHING_STRATEGY, str(matching_strategy))
         settings.setValue(self._KEY_AI_IOU_THRESHOLD, float(iou_threshold))
         settings.setValue(self._KEY_AI_MAX_MISSES, int(max_misses))
+        settings.setValue(self._KEY_AI_MAX_OUTPUT_MISSES, int(max_output_misses))
         settings.setValue(self._KEY_AI_VELOCITY_CLIP, float(velocity_clip))
         settings.setValue(self._KEY_AI_HIGH_CONF_THRESH, float(high_conf_thresh))
         settings.setValue(self._KEY_AI_REDETECT_BUDGET, int(redetect_budget))
         settings.setValue(self._KEY_AI_REID_MIN_TRACKS, int(reid_min_tracks))
         settings.setValue(self._KEY_AI_REID_STRIDE, int(reid_stride))
         logging.info(
-            "SettingsDialog: saved AI settings conf=%.2f stride=%d smooth=%.2f hide=%d redetect=%d roi_pad=%.2f filter=%s sigma=%.2f denoise=%s str=%d matching=%s iou=%.2f misses=%d",
-            conf, stride, smooth, hide_ms, redetect_retries, redetect_roi_pad, filter_type, mcukf_kernel_sigma, denoise_method, denoise_strength, matching_strategy, iou_threshold, max_misses,
+            "SettingsDialog: saved AI settings conf=%.2f stride=%d smooth=%.2f hide=%d redetect=%d roi_pad=%.2f filter=%s sigma=%.2f denoise=%s str=%d matching=%s iou=%.2f misses=%d output_misses=%d",
+            conf, stride, smooth, hide_ms, redetect_retries, redetect_roi_pad, filter_type, mcukf_kernel_sigma, denoise_method, denoise_strength, matching_strategy, iou_threshold, max_misses, max_output_misses,
         )
 
     def _save_head_classifier_settings(
@@ -1072,6 +1089,15 @@ class SettingsDialog(QDialog):
             return max(1, min(10, int(val)))
         except Exception:
             return SettingsDialog._RECOMMENDED_MAX_MISSES
+
+    @staticmethod
+    def load_ai_max_output_misses() -> int:
+        settings = QSettings(SettingsDialog._SETTINGS_ORG, SettingsDialog._SETTINGS_APP)
+        val = settings.value(SettingsDialog._KEY_AI_MAX_OUTPUT_MISSES, SettingsDialog._RECOMMENDED_MAX_OUTPUT_MISSES)
+        try:
+            return max(0, min(10, int(val)))
+        except Exception:
+            return SettingsDialog._RECOMMENDED_MAX_OUTPUT_MISSES
 
     @staticmethod
     def load_ai_velocity_clip() -> float:

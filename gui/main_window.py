@@ -1238,6 +1238,7 @@ class MainWindow(QMainWindow):
             matching_strategy=cfg.get("matching_strategy", "hungarian"),
             iou_threshold=float(cfg.get("iou_threshold", 0.25)),
             max_misses=int(cfg.get("max_misses", 4)),
+            max_output_misses=int(cfg.get("max_output_misses", 0)),
             velocity_clip=float(cfg.get("velocity_clip", 0.30)),
             high_conf_thresh=float(cfg.get("high_conf_thresh", 0.5)),
         )

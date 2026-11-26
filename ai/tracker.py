@@ -767,9 +767,13 @@ class DetectionTracker:
         reid_min_tracks: int = 3,
         reid_stride: int = 3,
         backend: str | None = None,  # 由 __new__ 消费，python 后端忽略
+        max_output_misses: int = 0,  # 输出门控：misses 超过此值的 track 不输出（内部生命周期不受影响）
     ):
         self._iou_threshold = iou_threshold
         self._max_misses = max_misses
+        # 默认 0：第一次推理 miss 后停止输出；misses=0 的跳帧预测仍输出。
+        # 内部生命周期仍由 max_misses 控制；两参数相等即恢复旧可见性语义。
+        self._max_output_misses = max(0, int(max_output_misses))
         self._smooth_alpha = smooth_alpha
         self._min_hits = min_hits_to_show
         self._next_id = 1
@@ -848,6 +852,7 @@ class DetectionTracker:
         high_conf_thresh: float | None = None,
         velocity_clip: float | None = None,
         second_stage_iou_min: float | None = None,
+        max_output_misses: int | None = None,
     ) -> None:
         """批量更新跟踪器参数，运行时生效。
 
@@ -868,6 +873,8 @@ class DetectionTracker:
                 trk.kalman._velocity_clip = float(velocity_clip)
         if second_stage_iou_min is not None:
             self._second_stage_iou_min = float(second_stage_iou_min)
+        if max_output_misses is not None:
+            self._max_output_misses = max(0, int(max_output_misses))
 
     def update_appearance(self, frame: np.ndarray) -> None:
         """为所有活跃 track 更新外观颜色直方图。"""
@@ -1414,7 +1421,9 @@ class DetectionTracker:
     def _active_tracks(self) -> list[dict]:
         results = []
         for trk in self._tracks.values():
-            if trk.hits >= self._min_hits:
+            # 输出门控：除 hits 达标外，还要求 misses 未超 _max_output_misses；
+            # 仅影响可见性，内部 track 仍按 max_misses 保留、可被后续 correct 恢复显示
+            if trk.hits >= self._min_hits and trk.misses <= self._max_output_misses:
                 results.append(trk.to_dict())
         return results
 

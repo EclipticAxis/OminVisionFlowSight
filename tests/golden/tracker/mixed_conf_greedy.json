@@ -92,18 +92,6 @@
     "y2": 0.380004017
    },
    {
-    "confidence": 0.88,
-    "keypoints": [],
-    "label": "person",
-    "predicted_only": true,
-    "track_id": 2,
-    "track_state": "predicted",
-    "x1": 0.65,
-    "x2": 0.75,
-    "y1": 0.54,
-    "y2": 0.66
-   },
-   {
     "confidence": 0.3,
     "keypoints": [],
     "label": "person",
@@ -140,18 +128,6 @@
     "x2": 0.75,
     "y1": 0.54,
     "y2": 0.66
-   },
-   {
-    "confidence": 0.3,
-    "keypoints": [],
-    "label": "person",
-    "predicted_only": true,
-    "track_id": 3,
-    "track_state": "predicted",
-    "x1": 0.45,
-    "x2": 0.55,
-    "y1": 0.44,
-    "y2": 0.56
    }
   ]
  ],

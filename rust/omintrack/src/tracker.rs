@@ -268,6 +268,7 @@ pub struct TrackerParams {
     pub velocity_clip: f64,
     pub second_stage_iou_min: f64,
     pub redetect_budget: i32,
+    pub max_output_misses: i32,
 }
 
 impl Default for TrackerParams {
@@ -287,6 +288,7 @@ impl Default for TrackerParams {
             velocity_clip: 0.30,
             second_stage_iou_min: 0.1,
             redetect_budget: 1,
+            max_output_misses: 0, // 输出门控：misses 超过此值的 track 不输出（内部生命周期不受影响）
         }
     }
 }
@@ -294,6 +296,7 @@ impl Default for TrackerParams {
 pub struct TrackerCore {
     pub iou_threshold: f64,
     pub max_misses: i32,
+    pub max_output_misses: i32,
     pub smooth_alpha: f64,
     pub min_hits: i32,
     pub next_id: i64,
@@ -321,6 +324,7 @@ impl TrackerCore {
         TrackerCore {
             iou_threshold: p.iou_threshold,
             max_misses: p.max_misses,
+            max_output_misses: p.max_output_misses.max(0),
             smooth_alpha: p.smooth_alpha,
             min_hits: p.min_hits_to_show,
             next_id: 1,
@@ -414,6 +418,7 @@ impl TrackerCore {
         high_conf_thresh: Option<f64>,
         velocity_clip: Option<f64>,
         second_stage_iou_min: Option<f64>,
+        max_output_misses: Option<i32>,
     ) {
         if let Some(v) = iou_threshold {
             self.iou_threshold = v;
@@ -436,6 +441,9 @@ impl TrackerCore {
         if let Some(v) = second_stage_iou_min {
             self.second_stage_iou_min = v;
         }
+        if let Some(v) = max_output_misses {
+            self.max_output_misses = v.max(0);
+        }
     }
 
     /// 跳帧路径专用：仅推进卡尔曼（对应 `predict_step`）。
@@ -452,9 +460,11 @@ impl TrackerCore {
     }
 
     fn active_tracks(&self) -> Vec<TrackSnapshot> {
+        // 输出门控：除 hits 达标外，还要求 misses 未超 max_output_misses；
+        // 仅影响可见性，内部 track 仍按 max_misses 保留、可被后续 correct 恢复显示
         self.tracks
             .values()
-            .filter(|t| t.hits >= self.min_hits)
+            .filter(|t| t.hits >= self.min_hits && t.misses <= self.max_output_misses)
             .map(|t| t.to_snapshot())
             .collect()
     }

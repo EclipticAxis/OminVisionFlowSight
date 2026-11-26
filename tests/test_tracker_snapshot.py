@@ -396,10 +396,14 @@ def test_single_uniform_manifold_ukf(update_golden):
 
 def test_auto_outlier_switch(update_golden):
     data = scenario_auto_outlier()
-    # 全程单 track，id 稳定
+    # 输出门控允许 miss 帧为空；内部单 track 保留，恢复可见时仍为原 ID。
+    visible_ids = []
     for fr in data["frames"]:
-        assert len(fr) == 1
-        assert fr[0]["track_id"] == 1
+        assert len(fr) <= 1
+        if fr:
+            visible_ids.append(fr[0]["track_id"])
+    assert visible_ids and set(visible_ids) == {1}
+    assert any(not fr for fr in data["frames"][30:])
     # 适配器最终切换到非 ukf 类型（实测经由 miss_rate > 0.5 触发 mcukf）
     assert data["adaptor_type"] in ("mcukf", "manifold_ukf"), data["adaptor_type"]
     kalman_seen = {t["kalman"] for m in data["meta"] for t in m["tracks"].values()}
@@ -438,8 +442,13 @@ def test_cross_hungarian_ids(update_golden):
 def test_mixed_conf_greedy(update_golden):
     data = scenario_mixed_conf("greedy")
     # greedy：远处低置信度检测不关联既有 track -> 新建 track 3
-    assert sorted(o["track_id"] for o in data["frames"][3]) == [1, 2, 3]
-    assert sorted(o["track_id"] for o in data["frames"][4]) == [1, 2, 3]
+    # track 2 首次 miss 后隐藏预测输出，但内部轨迹保留。
+    assert sorted(o["track_id"] for o in data["frames"][3]) == [1, 3]
+    assert data["meta"][3]["tracks"]["2"]["misses"] == 1
+    # 两个既有 track 以原 ID 恢复；新 track 3 同样只隐藏输出而不提前删除。
+    assert sorted(o["track_id"] for o in data["frames"][4]) == [1, 2]
+    assert data["meta"][4]["tracks"]["3"]["misses"] == 1
+    assert data["meta"][4]["tracks"]["3"]["state"] == "predicted"
     _check_golden("mixed_conf_greedy", data, update_golden)
 
 
@@ -447,9 +456,9 @@ def test_mixed_conf_cascade(update_golden):
     data = scenario_mixed_conf("cascade")
     # cascade：低置信度检测仅关联不新建 -> track 数保持 2
     fr3 = data["frames"][3]
-    assert sorted(o["track_id"] for o in fr3) == [1, 2]
-    states = {o["track_id"]: o["track_state"] for o in fr3}
-    assert states[2] == "predicted"  # 未匹配 -> predicted
+    assert sorted(o["track_id"] for o in fr3) == [1]
+    assert data["meta"][3]["tracks"]["2"]["misses"] == 1
+    assert data["meta"][3]["tracks"]["2"]["state"] == "predicted"
     # 第 5 帧两 track 以原 ID 恢复
     assert sorted(o["track_id"] for o in data["frames"][4]) == [1, 2]
     _check_golden("mixed_conf_cascade", data, update_golden)
@@ -466,13 +475,15 @@ def test_disappear_and_delete(update_golden):
     # 前 3 帧正常
     for fr in frames[:3]:
         assert len(fr) == 1 and fr[0]["track_state"] == "normal"
-    # 接下来 4 个空帧：misses=1..4 <= max_misses -> track 以 predicted 存活
-    for fr in frames[3:7]:
-        assert len(fr) == 1
-        assert fr[0]["track_state"] == "predicted"
-        assert fr[0]["predicted_only"] is True
+    # misses=1..4：输出已隐藏，内部 track 仍以 predicted 状态保留。
+    for index in range(3, 7):
+        assert frames[index] == []
+        meta = data["meta"][index]["tracks"]["1"]
+        assert meta["misses"] == index - 2
+        assert meta["state"] == "predicted"
     # 第 5 个连续 miss（misses=5 > max_misses=4）-> 删除，输出为空
     assert frames[7] == []
+    assert "1" not in data["meta"][7]["tracks"]
     assert frames[8] == []
     # 重现 -> 全新 track_id（_next_id 不复用）
     assert frames[9][0]["track_id"] == 2
@@ -557,11 +568,13 @@ def test_redetect_failure(update_golden):
     data = scenario_redetect_failure()
     # 恰好调用 max_retries=2 次，之后不再调用
     assert len(data["redetect_calls"]) == 2
-    # 3 帧正常 + 4 帧 predicted（misses=1..4）+ 第 5 帧删除 + 1 帧空
-    assert [len(fr) for fr in data["frames"]] == [1, 1, 1, 1, 1, 1, 1, 0]
-    assert data["frames"][3][0]["track_state"] == "predicted"
+    # 3 帧正常；随后预测输出隐藏，内部轨迹到第 5 次 miss 才删除。
+    assert [len(fr) for fr in data["frames"]] == [1, 1, 1, 0, 0, 0, 0, 0]
+    assert data["meta"][3]["tracks"]["1"]["state"] == "predicted"
+    assert data["meta"][3]["tracks"]["1"]["misses"] == 1
     # attempts 递增过程被冻结在 meta 中
     assert data["meta"][4]["tracks"]["1"]["attempts"] == 2
+    assert "1" not in data["meta"][7]["tracks"]
     _check_golden("redetect_failure", data, update_golden)
 
 

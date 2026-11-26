@@ -484,6 +484,7 @@ detections (list[Detection])
 6. 未匹配 track → ROI 重检测或 miss+1
 7. 清理超期 track (miss > max_misses)
 8. AUTO 模式评估 → 可能切换滤波器
+9. 按 hits + max_output_misses 过滤输出（内部 track 不提前删除）
    输出 list[dict] (含 track_id, track_state)
 ```
 
@@ -492,6 +493,7 @@ detections (list[Detection])
 - `P_MAX_POSITION=0.05, P_MAX_SIZE=0.02, P_MAX_VELOCITY=0.01`（按分量协方差上界）
 - 自适应 Q/R（基于 NIS + 目标尺度）
 - 速度限幅 `[-0.3, 0.3]`（归一化坐标）
+- `max_misses=4` 控制内部轨迹过期；`max_output_misses=0` 控制预测输出，首次推理 miss 后隐藏但保留原轨迹供重关联；两参数相等恢复旧可见性（[设计](docs/prediction-output-gating.md)）
 
 #### `ai/rectangle_detector.py` — 矩形检测与跟踪
 
@@ -761,6 +763,8 @@ for each vertex (vx, vy):
 |------|--------|------|------|
 | `ai/conf_threshold` | 0.5 | 0.1–0.9 | YOLO 检测置信度阈值 |
 | `ai/infer_stride` | 1 | 1–10 | 推理跳帧间隔（越大越省算力但跟踪预测多） |
+| `ai/max_misses` | 4 | 1–10 | 内部轨迹保留帧数（仅控制内部过期，不控制预测输出） |
+| `ai/max_output_misses` | 0 | 0–10 | 预测输出保留帧数；首次推理 miss 数超过该值即隐藏，内部轨迹仍按 `max_misses` 保留 |
 | `ai/smooth_alpha` | 0.85 | 0–1 | 显示框平滑系数 |
 | `ai/hide_delay_ms` | 2000 | 500–5000 | 目标消失后延迟隐藏时间 |
 | `ai/filter_type` | ukf | ukf/mcukf/manifold_ukf/auto | 卡尔曼滤波器类型 |
@@ -902,6 +906,7 @@ MainWindow.closeEvent()
 | 2026-11-22 | OnnxYoloBackend 完整支持 OBB（[设计](docs/obb-onnx-backend.md) 1.0：20 通道布局 angle 末通道弧度 + xywhr2xyxyxyxy 逐行对齐 ultralytics、逐点反映射、bbox=polygon 外接矩形、外接矩形 NMS≈rotated NMS 近似、label 取 onnx metadata names、`_load_onnx_detect_model` 任务推断接通、预处理 BGR→RGB 修正；同帧对拍 valid 165/178、IoU mean 0.989、polygon dev<0.014；新增 12 项，全套件 1378 项全绿） | ✅ PR #10 → `95f9ac9` |
 | 2026-11-22 | 精确 Polygon IoU 双側自实现（[设计](docs/precise-polygon-iou.md) 1.0：Sutherland-Hodgman 凸裁剪 + shoelace 面积替换 shapely/外接矩形静默降级，消除 §3.4 shapely 环境分歧；双側逐行同算法 1e-9 对拍，新增 13 项测试；13 场景 golden 重生成逐字节不变） | ✅ PR #14 → `e43c46c` |
 | 2026-11-25 | MCUKF 创新域 IRLS-MCC 修复：[设计](docs/mcukf-irls-correction.md)（标准 UT 矩 + R 白化逐通道 R_eff + 真实迭代 + 同 R_eff Joseph；Python/Rust 同步，默认无量纲 σ=1.0；新增 IRLS 11 项，全套件 1554 项通过，MOT17 对照无额外退化） | ✅ 已合入 main（PR #18 → a81ce34） |
+| 2026-11-26 | 预测输出门控与轨迹生命周期解耦：[设计](docs/prediction-output-gating.md)（新增 `max_output_misses=0`，首次推理 miss 后停止输出但保留内部轨迹；Python/Rust/InferWorker/GUI 同步，新增 10 项双端门控 + 9 项 GUI + 1 项 InferWorker 测试，当前工作树全套件 1429 项通过；历史行统计提交与依赖收集环境不同，不作数量递推；MOT17 FRCNN 七序列全 stride HOTA/MOTA/IDF1 改善） | ⏳ 待合入 |
 
 ### 11.3 已知问题
 
@@ -1114,6 +1119,7 @@ if _is_mynew_model(path):
 |------|------|-------------|
 | 1 个共享推理线程 | 避免 GPU 资源争抢和多模型实例内存爆炸 | ✅ |
 | 跟踪双实现（Python 参考 + Rust 性能） | 默认 auto（omintrack 可用即 Rust），Python 保留参考实现与无构建回退；等价性测试锁定行为 | ✅（禁止只改一侧，见 [契约](docs/rust-tracker-core.md) §3.3 与 [默认行为](docs/default-backends.md)） |
+| 预测输出与内部轨迹生命周期分离 | `max_output_misses` 只控制可见性，`max_misses` 只控制内部过期；避免 stride 放大幽灵预测，同时保留重关联原 ID | ✅（禁止用提前删除轨迹代替输出门控，见 [设计](docs/prediction-output-gating.md)） |
 | squircle 资产单一定义源（theme.SQUIRCLE_ASSETS + 生成器） | 样式一致性机器可查（契约测试三方比对） | ✅ |
 | 归一化坐标 | 分辨率无关，跨摄像头一致 | ✅ |
 | QSettings 持久化 | 跨会话配置记忆 | ✅ |

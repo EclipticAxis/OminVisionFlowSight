@@ -643,3 +643,44 @@ def test_stop_shuts_down_all_runtimes_and_clears_cache_once(qapp, monkeypatch):
     worker.stop()
     assert worker._pipeline_runtimes == {}
     assert shutdowns == [rt.pipeline]
+
+
+# ---------------------------------------------------------------------------
+# set_tracker_params(max_output_misses) 广播契约
+# ---------------------------------------------------------------------------
+
+def test_set_tracker_params_broadcasts_max_output_misses(worker):
+    """set_tracker_params(max_output_misses=...) 广播到所有既有 tracker，
+    且 register_slot 新建的 tracker 继承当前值；参数更新同步清空 slot 缓存。
+
+    固定 python 后端以便直接读取 tracker._max_output_misses（Rust 适配层
+    不暴露该属性）；本用例不启动线程，仅验证配置传播与缓存副作用。
+    """
+    worker.set_tracker_backend("python")
+
+    worker.register_slot(0)
+    worker.register_slot(1)
+    assert worker._trackers[0]._max_output_misses == 0  # 默认 0
+    assert worker._trackers[1]._max_output_misses == 0
+
+    # _clear_slot_caches 副作用：参数批量更新会清空各 slot 结果缓存
+    worker._last_detections[0] = [GOOD_DET]
+    worker._last_detections[1] = [GOOD_DET]
+
+    worker.set_tracker_params(max_output_misses=3)
+
+    assert worker._max_output_misses == 3
+    for slot_id in (0, 1):
+        assert worker._trackers[slot_id]._max_output_misses == 3
+    assert worker._last_detections == {}
+
+    # 后注册的 slot 继承"当前值"而非构造默认值
+    worker.register_slot(2)
+    assert worker._trackers[2]._max_output_misses == 3
+
+    # 运行时再次下调同样广播到全部既有 tracker（含新注册 slot）
+    worker._last_detections[2] = [GOOD_DET]
+    worker.set_tracker_params(max_output_misses=1)
+    for slot_id in (0, 1, 2):
+        assert worker._trackers[slot_id]._max_output_misses == 1
+    assert worker._last_detections == {}

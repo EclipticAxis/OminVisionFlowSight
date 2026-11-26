@@ -182,7 +182,7 @@ impl RustTracker {
                         redetect_enabled=false, redetect_max_retries=2, redetect_iou_threshold=0.20,
                         filter_type="ukf", mcukf_kernel_sigma=1.0, matching_strategy="hungarian",
                         high_conf_thresh=0.5, velocity_clip=0.30, second_stage_iou_min=0.1,
-                        redetect_budget=1))]
+                        redetect_budget=1, max_output_misses=0))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         iou_threshold: f64,
@@ -199,6 +199,7 @@ impl RustTracker {
         velocity_clip: f64,
         second_stage_iou_min: f64,
         redetect_budget: i32,
+        max_output_misses: i32,
     ) -> Self {
         let core = TrackerCore::new(TrackerParams {
             iou_threshold,
@@ -215,6 +216,7 @@ impl RustTracker {
             velocity_clip,
             second_stage_iou_min,
             redetect_budget,
+            max_output_misses,
         });
         RustTracker { core }
     }
@@ -300,7 +302,8 @@ impl RustTracker {
     }
 
     #[pyo3(signature = (iou_threshold=None, max_misses=None, matching_strategy=None,
-                        high_conf_thresh=None, velocity_clip=None, second_stage_iou_min=None))]
+                        high_conf_thresh=None, velocity_clip=None, second_stage_iou_min=None,
+                        max_output_misses=None))]
     #[allow(clippy::too_many_arguments)]
     fn set_tracker_params(
         &mut self,
@@ -310,6 +313,7 @@ impl RustTracker {
         high_conf_thresh: Option<f64>,
         velocity_clip: Option<f64>,
         second_stage_iou_min: Option<f64>,
+        max_output_misses: Option<i32>,
     ) {
         self.core.set_tracker_params(
             iou_threshold,
@@ -318,6 +322,7 @@ impl RustTracker {
             high_conf_thresh,
             velocity_clip,
             second_stage_iou_min,
+            max_output_misses,
         );
     }
 
