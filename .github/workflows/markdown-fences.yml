@@ -1,0 +1,34 @@
+name: markdown-fences
+
+# Markdown 代码围栏配对检查（CommonMark §4.5，设计见 docs/markdown-fence-check.md）。
+# 与本地守护同源：tools/check_markdown_fences.py（tests/test_markdown_fences.py
+# 在全套件中执行同一检查）。仅在触及 Markdown 或检查器自身时运行。
+
+on:
+  pull_request:
+    paths:
+      - "**.md"
+      - "tools/check_markdown_fences.py"
+      - "tests/test_markdown_fences.py"
+      - ".github/workflows/markdown-fences.yml"
+  push:
+    branches: [main]
+    paths:
+      - "**.md"
+      - "tools/check_markdown_fences.py"
+      - "tests/test_markdown_fences.py"
+      - ".github/workflows/markdown-fences.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  fence-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check Markdown fences
+        run: python tools/check_markdown_fences.py

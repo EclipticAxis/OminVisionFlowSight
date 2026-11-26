@@ -59,7 +59,7 @@
 - 🔌 **可扩展流水线（VisionCore）**：模块化 Pipeline / Stage 体系，内置去噪、检测、跟踪、目标状态、重检、事件等阶段，支持插件注册（Plugin Registry）与影子（Shadow）旁路验证，可在不影响主链路的情况下逐步重构。
 - 📡 **事件总线与协议发布**：Qt 信号槽解耦的 EventBus 贯通采集 / 推理 / GUI / 录制线程；支持 JSON / CBOR 序列化，提供 UDP、Console 等适配器将目标状态对外发布。
 - 🖥️ **专业暗色 GUI**：Fusion 风格 + 动画系统的深色主题界面，支持多相机网格布局、启动画面、设置对话框与大量功能开关。
-- 🧪 **完善的测试**：`tests/` 下 1429 个 pytest 用例，覆盖流水线各阶段、序列化、事件总线、跟踪器行为快照与 Python/Rust 等价性。
+- 🧪 **完善的测试**：`tests/` 下 1446 个 pytest 用例，覆盖流水线各阶段、序列化、事件总线、跟踪器行为快照与 Python/Rust 等价性。
 
 > 提示：手部手势代码使用 MediaPipe 旧式 Solutions API，依赖版本限定为 `mediapipe>=0.10.14,<0.10.15`；当前验证的 0.10.35 与 1.0.1 已移除该 API，升级前需先迁移至 Tasks API。
 
@@ -84,7 +84,7 @@
 
 ### 1. 克隆与安装
 
-````bash
+```bash
 git clone https://github.com/EclipticAxis/OminVisionFlowSight.git
 cd OminVisionFlowSight
 
@@ -107,13 +107,13 @@ venv\Scripts\activate.bat
 
 安装依赖（未激活虚拟环境时，可用 `venv\Scripts\python.exe -m pip` 代替 `pip`）：
 
-````bash
+```bash
 pip install -r requirements.txt
 ```
 
 ### 2. 启动主程序
 
-````bash
+```bash
 # 图形界面（多路相机网格）；虚拟环境已激活时
 python main.py
 
@@ -153,7 +153,7 @@ maturin develop --manifest-path rust\omintrack\Cargo.toml --release
 
 除完整 GUI 外，项目提供最小可运行 Demo（单路摄像头闭环：采集 → 显示 → YOLO 检测 → 跟踪 → 叠加显示）：
 
-````bash
+```bash
 # 默认参数启动
 python demo.py
 
@@ -207,7 +207,7 @@ OminVisionFlowSight/
 先安装开发依赖（含 pytest 与 Rust 扩展构建用 maturin）：`pip install -r requirements-dev.txt`。
 
 ```bash
-pytest tests/                                          # 全部用例（1429 项）
+pytest tests/                                          # 全部用例（1446 项）
 pytest tests/test_hand_gesture_recognizer.py           # MediaPipe Hands API / 数组布局兼容性（8 例）
 pytest tests/test_inferworker_pipeline_contract.py     # Legacy/Pipeline 帧处理与 runtime 契约（31 例）
 pytest tests/test_inferworker_resilience.py            # 推理线程防火带 / 单写 / slot / 生命周期（15 例）
@@ -215,9 +215,10 @@ pytest tests/test_tracker_rust_equivalence.py          # Python/Rust 跟踪器�
 pytest tests/test_tracker_snapshot.py                  # 跟踪器行为 golden 快照（13 场景）
 pytest tests/test_tracker_snapshot.py --update-golden  # 行为变更后再生成快照
 python benchmark/benchmark_tracker_rust.py             # 跟踪器性能基准（Python vs Rust）
+python tools/check_markdown_fences.py                 # Markdown 围栏配对检查（CI markdown-fences 同源）
 ```
 
-> 说明：全套件 1429 项已通过（2026-11-26）。架构守护用例通过 `tests/_runtime_checks.py` 在子进程中检查 import 副作用，并使用 UTF-8 避免 Windows 中文区域编码影响。
+> 说明：全套件 1446 项已通过（2026-11-26）。架构守护用例通过 `tests/_runtime_checks.py` 在子进程中检查 import 副作用，并使用 UTF-8 避免 Windows 中文区域编码影响。
 
 ## 文档
 
@@ -226,7 +227,7 @@ python benchmark/benchmark_tracker_rust.py             # 跟踪器性能基准�
 - **架构与规划**：[战略路线图](./docs/strategic-roadmap.md)、[VisionCore 流水线基础](./docs/pipeline-foundation.md)、[SentinelTrack 2.0 架构蓝图](./docs/sentineltrack-2.0-architecture-blueprint.md)
 - **跟踪与滤波**：[预测输出门控与轨迹生命周期](./docs/prediction-output-gating.md)、[MCUKF IRLS 修复契约](./docs/mcukf-irls-correction.md)、[MCUKF / Manifold UKF 方案](./docs/mcukf-manifold-ukf-plan.md)、[AUTO 自适应滤波](./docs/auto-filter-adaptive-plan.md)、[跟踪阶段](./docs/tracker-stage.md)、[Rust 内核设计契约](./docs/rust-tracker-core.md)、[Rust 构建说明](./rust/omintrack/README.md)
 - **识别运行时**：[MediaPipe Hands 兼容性约束](./docs/mediapipe-hands-compatibility.md)
-- **运行与维护**：[运行时元数据与启动脚本维护](./docs/runtime-maintenance.md)
+- **运行与维护**：[运行时元数据与启动脚本维护](./docs/runtime-maintenance.md)、[Markdown 围栏配对检查](./docs/markdown-fence-check.md)
 - **GUI 与主题**：[squircle 连续曲率圆角](./docs/squircle-capsule-widgets.md)
 - **性能**：[性能退化分析](./docs/performance-degradation-analysis.md)、[CBOR 基准](./docs/cbor-benchmark.md)
 - **插件与协议**：[插件注册表](./docs/plugin-registry.md)、[状态发布](./docs/state-publisher.md)、[UDP 适配器](./docs/udp-adapter.md)
