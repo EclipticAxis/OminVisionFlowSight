@@ -907,7 +907,7 @@ MainWindow.closeEvent()
 | 2026-11-22 | 精确 Polygon IoU 双側自实现（[设计](docs/precise-polygon-iou.md) 1.0：Sutherland-Hodgman 凸裁剪 + shoelace 面积替换 shapely/外接矩形静默降级，消除 §3.4 shapely 环境分歧；双側逐行同算法 1e-9 对拍，新增 13 项测试；13 场景 golden 重生成逐字节不变） | ✅ PR #14 → `e43c46c` |
 | 2026-11-25 | MCUKF 创新域 IRLS-MCC 修复：[设计](docs/mcukf-irls-correction.md)（标准 UT 矩 + R 白化逐通道 R_eff + 真实迭代 + 同 R_eff Joseph；Python/Rust 同步，默认无量纲 σ=1.0；新增 IRLS 11 项，全套件 1554 项通过，MOT17 对照无额外退化） | ✅ 已合入 main（PR #18 → a81ce34） |
 | 2026-11-26 | 预测输出门控与轨迹生命周期解耦：[设计](docs/prediction-output-gating.md)（新增 `max_output_misses=0`，首次推理 miss 后停止输出但保留内部轨迹；Python/Rust/InferWorker/GUI 同步，新增 10 项双端门控 + 9 项 GUI + 1 项 InferWorker 测试，当前工作树全套件 1429 项通过；历史行统计提交与依赖收集环境不同，不作数量递推；MOT17 FRCNN 七序列全 stride HOTA/MOTA/IDF1 改善） | ✅ 已合入 main（PR #19 → `0e9d959`） |
-| 2026-11-26 | README 四反引号围栏修复 + Markdown 围栏配对检查固化（[设计](docs/markdown-fence-check.md)：`tools/check_markdown_fences.py` 实现 CommonMark §4.5 闭合三规则 + EOF 未闭合检测，单实现供 pytest 守护与 markdown-fences workflow 复用；修复 PR #17 引入的 4 处起始围栏；新增 17 项测试，全套件 1446 项通过） | 🔄 PR #20（待合并） |
+| 2026-11-26 | README 四反引号围栏修复 + Markdown 围栏配对检查固化（[设计](docs/markdown-fence-check.md)：`tools/check_markdown_fences.py` 实现 CommonMark §4.5 闭合三规则 + EOF 未闭合检测，单实现供 pytest 守护与 markdown-fences workflow 复用；修复 PR #17 引入的 4 处起始围栏；新增 17 项测试，全套件 1446 项通过） | ✅ 已合入 main（PR #20 → `1b5f199`） |
 
 ### 11.3 已知问题
 

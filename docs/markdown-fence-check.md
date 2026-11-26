@@ -2,7 +2,7 @@
 
 > **版本**：1.0 — 2026-11-26
 > **范围**：`tools/check_markdown_fences.py`（新增）、`tests/test_markdown_fences.py`（新增 17 项）、`.github/workflows/markdown-fences.yml`（新增）、`README.md`（围栏修复 + 计数/索引同步）、`PROJECT_BIBLE.md` / `AGENTS.md`（计数同步）
-> **状态**：待合并（PR #20）；新增 17 项测试，全套件 1446 项通过。合并后须按 §17.3 回改本状态头与 §11.2 行
+> **状态**：已合入 main（PR #20 → `1b5f199`）；新增 17 项测试，全套件 1446 项通过
 
 ---
 
