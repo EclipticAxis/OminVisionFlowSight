@@ -906,7 +906,7 @@ MainWindow.closeEvent()
 | 2026-11-22 | OnnxYoloBackend 完整支持 OBB（[设计](docs/obb-onnx-backend.md) 1.0：20 通道布局 angle 末通道弧度 + xywhr2xyxyxyxy 逐行对齐 ultralytics、逐点反映射、bbox=polygon 外接矩形、外接矩形 NMS≈rotated NMS 近似、label 取 onnx metadata names、`_load_onnx_detect_model` 任务推断接通、预处理 BGR→RGB 修正；同帧对拍 valid 165/178、IoU mean 0.989、polygon dev<0.014；新增 12 项，全套件 1378 项全绿） | ✅ PR #10 → `95f9ac9` |
 | 2026-11-22 | 精确 Polygon IoU 双側自实现（[设计](docs/precise-polygon-iou.md) 1.0：Sutherland-Hodgman 凸裁剪 + shoelace 面积替换 shapely/外接矩形静默降级，消除 §3.4 shapely 环境分歧；双側逐行同算法 1e-9 对拍，新增 13 项测试；13 场景 golden 重生成逐字节不变） | ✅ PR #14 → `e43c46c` |
 | 2026-11-25 | MCUKF 创新域 IRLS-MCC 修复：[设计](docs/mcukf-irls-correction.md)（标准 UT 矩 + R 白化逐通道 R_eff + 真实迭代 + 同 R_eff Joseph；Python/Rust 同步，默认无量纲 σ=1.0；新增 IRLS 11 项，全套件 1554 项通过，MOT17 对照无额外退化） | ✅ 已合入 main（PR #18 → a81ce34） |
-| 2026-11-26 | 预测输出门控与轨迹生命周期解耦：[设计](docs/prediction-output-gating.md)（新增 `max_output_misses=0`，首次推理 miss 后停止输出但保留内部轨迹；Python/Rust/InferWorker/GUI 同步，新增 10 项双端门控 + 9 项 GUI + 1 项 InferWorker 测试，当前工作树全套件 1429 项通过；历史行统计提交与依赖收集环境不同，不作数量递推；MOT17 FRCNN 七序列全 stride HOTA/MOTA/IDF1 改善） | ⏳ 待合入 |
+| 2026-11-26 | 预测输出门控与轨迹生命周期解耦：[设计](docs/prediction-output-gating.md)（新增 `max_output_misses=0`，首次推理 miss 后停止输出但保留内部轨迹；Python/Rust/InferWorker/GUI 同步，新增 10 项双端门控 + 9 项 GUI + 1 项 InferWorker 测试，当前工作树全套件 1429 项通过；历史行统计提交与依赖收集环境不同，不作数量递推；MOT17 FRCNN 七序列全 stride HOTA/MOTA/IDF1 改善） | ✅ 已合入 main（PR #19 → `0e9d959`） |
 
 ### 11.3 已知问题
 

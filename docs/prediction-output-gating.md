@@ -2,7 +2,7 @@
 
 > **版本**：1.1 — 2026-11-26
 > **范围**：`ai/tracker.py`、`ai/tracker_backend.py`、`ai/inference.py`、`rust/omintrack/src/tracker.rs`、`rust/omintrack/src/py_api.rs`、`gui/settings_dialog.py`、`gui/main_window.py`、跟踪快照及新增门控测试。
-> **状态**：待合入 main（基于 `4a1eb95` 的工作树）；Rust release 重建通过，双端专项 36 项、GUI 9 项、InferWorker 16 项、快照 14 项、全套件 1429 项通过；MOT17 FRCNN 七序列复验完成。
+> **状态**：已合入 main（PR #19 → `0e9d959`）；Rust release 重建通过，双端专项 36 项、GUI 9 项、InferWorker 16 项、快照 14 项、全套件 1429 项通过；MOT17 FRCNN 七序列复验完成。
 
 ## 1. 目标与背景
 
