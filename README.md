@@ -84,7 +84,7 @@
 
 ### 1. 克隆与安装
 
-````bash
+```bash
 git clone https://github.com/EclipticAxis/OminVisionFlowSight.git
 cd OminVisionFlowSight
 
@@ -107,13 +107,13 @@ venv\Scripts\activate.bat
 
 安装依赖（未激活虚拟环境时，可用 `venv\Scripts\python.exe -m pip` 代替 `pip`）：
 
-````bash
+```bash
 pip install -r requirements.txt
 ```
 
 ### 2. 启动主程序
 
-````bash
+```bash
 # 图形界面（多路相机网格）；虚拟环境已激活时
 python main.py
 
@@ -153,7 +153,7 @@ maturin develop --manifest-path rust\omintrack\Cargo.toml --release
 
 除完整 GUI 外，项目提供最小可运行 Demo（单路摄像头闭环：采集 → 显示 → YOLO 检测 → 跟踪 → 叠加显示）：
 
-````bash
+```bash
 # 默认参数启动
 python demo.py
 
