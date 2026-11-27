@@ -50,8 +50,10 @@ pub struct KalmanFilter {
     pub velocity_clip: f64,
     // NSA-KF 观测噪声自适应（docs/tracker-nsa-ocm-hmiou.md §2.1，默认关闭）
     pub nsa_enabled: bool,
-    pub nsa_interval: f64,
-    pub nsa_min: f64,
+    pub nsa_interval: f64,      // 高置信度分支缩放区间
+    pub nsa_min: f64,           // 高置信度分支乘子下界（防 R→0，保护性）
+    pub nsa_conf_thresh: f64,   // 分段阈值：conf 高于此值缩 R，否则放大 R
+    pub nsa_interval_sec: f64,  // 低置信度分支 R 放大倍数（降权观测）
     kernel_sigma: f64, // 相关熵核带宽 σ（固定值，无尺寸缩放）
     max_iter: usize,   // 不动点迭代上限（默认 3）
     wm: [f64; N_SIGMA],
@@ -90,6 +92,8 @@ impl KalmanFilter {
             nsa_enabled: false,
             nsa_interval: 1.0,
             nsa_min: 0.1,
+            nsa_conf_thresh: 0.6,
+            nsa_interval_sec: 2.0,
             kernel_sigma: kernel_sigma.max(0.01),
             max_iter: 3,
             wm,
@@ -114,13 +118,22 @@ impl KalmanFilter {
         self.r = r;
     }
 
-    /// NSA-KF 乘子（对应 `_nsa_multiplier`）：关闭时恒 1.0；
-    /// nsa_min 截断为保护性改动（防 conf→1 时 R 退化），非原文行为。
-    fn nsa_multiplier(&self, conf: f64) -> f64 {
+    /// NSA-KF 乘子（对应 `_nsa_multiplier`，上游 HybridSORT 分段语义）：
+    /// None → 1.0（中性）；conf > nsa_conf_thresh → max((1-conf)·interval, nsa_min)
+    /// （nsa_min 截断仅本分支，保护性）；否则 → nsa_interval_sec（放大 R 降权观测）。
+    /// 关闭时恒 1.0。
+    fn nsa_multiplier(&self, conf: Option<f64>) -> f64 {
         if !self.nsa_enabled {
             return 1.0;
         }
-        ((1.0 - conf) * self.nsa_interval).clamp(self.nsa_min, 1.0)
+        let Some(conf) = conf else {
+            return 1.0;
+        };
+        if conf > self.nsa_conf_thresh {
+            ((1.0 - conf) * self.nsa_interval).max(self.nsa_min)
+        } else {
+            self.nsa_interval_sec
+        }
     }
 
     /// NIS 自适应 Q（对应 `_adapt_q`）。
@@ -294,7 +307,7 @@ impl KalmanFilter {
     }
 
     /// UKF / ManifoldUKF 更新（对应两者的 `correct`）。
-    fn correct_base(&mut self, box_: &BBox, conf: f64) -> Result<BBox, String> {
+    fn correct_base(&mut self, box_: &BBox, conf: Option<f64>) -> Result<BBox, String> {
         let (cx, cy, w, h) = box_to_cxcywh(box_);
         let z = Vec8::from_row_slice(&[cx, cy, w, h, 0.0, 0.0, 0.0, 0.0]); // 仅用前 4 维
         self.make_r(w, h);
@@ -393,7 +406,7 @@ impl KalmanFilter {
     ///    R_eff = R C⁻¹（对角），K = Pxz (Pzz + R_eff)⁻¹，x_new = x_pred + K (z - z_pred)；
     /// 3. 位移 < 1e-6 接受并停止；达到上限使用最后鲁棒迭代的 K / R_eff / x；
     /// 4. 最终 Joseph 用同一 K / R_eff，NIS 用原始 r0 / S0；核带宽 σ 无尺寸缩放。
-    fn correct_mcukf(&mut self, box_: &BBox, conf: f64) -> Result<BBox, String> {
+    fn correct_mcukf(&mut self, box_: &BBox, conf: Option<f64>) -> Result<BBox, String> {
         let (cx, cy, w, h) = box_to_cxcywh(box_);
         let z = Vec8::from_row_slice(&[cx, cy, w, h, 0.0, 0.0, 0.0, 0.0]);
         self.make_r(w, h);
@@ -495,7 +508,7 @@ impl KalmanFilter {
         Ok(self.to_box())
     }
 
-    pub fn correct(&mut self, box_: &BBox, conf: f64) -> Result<BBox, String> {
+    pub fn correct(&mut self, box_: &BBox, conf: Option<f64>) -> Result<BBox, String> {
         if self.kind == FilterKind::McUkf {
             self.correct_mcukf(box_, conf)
         } else {

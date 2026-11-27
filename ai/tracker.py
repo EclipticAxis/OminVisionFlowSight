@@ -165,8 +165,10 @@ class _DetectionUKF:
         self._miss_streak = 0                        # 连续 miss 次数，用于自适应 Q
         # NSA-KF 观测噪声自适应（docs/tracker-nsa-ocm-hmiou.md §2.1，默认关闭 opt-in）
         self.nsa_enabled = False
-        self.nsa_interval = 1.0
-        self.nsa_min = 0.1
+        self.nsa_interval = 1.0       # 高置信度分支缩放区间
+        self.nsa_min = 0.1            # 高置信度分支乘子下界（防 R→0，保护性）
+        self.nsa_conf_thresh = 0.6    # 分段阈值：conf 高于此值缩 R，否则放大 R
+        self.nsa_interval_sec = 2.0   # 低置信度分支 R 放大倍数（降权观测）
 
     def _make_r(self, w: float, h: float) -> np.ndarray:
         """按目标尺度构造观测噪声 R：小目标位置噪声更大。"""
@@ -180,14 +182,23 @@ class _DetectionUKF:
             base_size_var,
         ], dtype=np.float64))
 
-    def _nsa_multiplier(self, conf: float) -> float:
-        """NSA-KF 乘子：clip((1 - conf)·nsa_interval, nsa_min, 1.0)；关闭时恒 1.0。
+    def _nsa_multiplier(self, conf: float | None) -> float:
+        """NSA-KF 乘子（上游 HybridSORT kalmanfilter_score.py 分段语义）：
 
-        nsa_min 截断为保护性改动（防 conf→1 时 R 退化），非原文行为（§2.1）。
+        - conf is None → 1.0（无 NSA，真正中性，缺省安全）
+        - conf > nsa_conf_thresh（默认 0.6）→ max((1-conf)·nsa_interval, nsa_min)
+          （高置信度缩 R；nsa_min=0.1 防 R→0 为保护性截断，仅本分支生效；
+          此分支 (1-conf)<0.4，interval=1 时天然 <1，无需上界 clip）
+        - conf <= nsa_conf_thresh → nsa_interval_sec（默认 2.0，低置信度放大 R=降权观测）
+        关闭时恒 1.0。
         """
         if not self.nsa_enabled:
             return 1.0
-        return float(np.clip((1.0 - float(conf)) * self.nsa_interval, self.nsa_min, 1.0))
+        if conf is None:
+            return 1.0
+        if float(conf) > self.nsa_conf_thresh:
+            return max((1.0 - float(conf)) * self.nsa_interval, self.nsa_min)
+        return float(self.nsa_interval_sec)
 
     def _adapt_q(self, nis: float) -> None:
         """根据 NIS 自适应调整过程噪声 Q。"""
@@ -275,7 +286,7 @@ class _DetectionUKF:
         self._clip_p_variance()
         return self.to_box()
 
-    def correct(self, box: np.ndarray, conf: float = 0.5) -> np.ndarray:
+    def correct(self, box: np.ndarray, conf: float | None = None) -> np.ndarray:
         """UKF 更新：sigma 点通过观测模型 + 无迹变换计算卡尔曼增益。
 
         观测模型 h(x) = H·x（直接取前 4 维 [cx, cy, w, h]）
@@ -353,7 +364,7 @@ class _DetectionMCUKF(_DetectionUKF):
         self._kernel_sigma = float(max(0.01, kernel_sigma))
         self._max_iter = int(max(1, max_iter))
 
-    def correct(self, box: np.ndarray, conf: float = 0.5) -> np.ndarray:
+    def correct(self, box: np.ndarray, conf: float | None = None) -> np.ndarray:
         """MCUKF 更新：创新域 IRLS-MCC 不动点迭代 + Joseph 形式协方差。"""
         cx, cy, w, h = _box_to_cxcywh(box)
         z = np.array([[cx], [cy], [w], [h]], dtype=np.float64)
@@ -472,7 +483,7 @@ class _DetectionManifoldUKF(_DetectionUKF):
         self._project_spd()
         return self.to_box()
 
-    def correct(self, box: np.ndarray, conf: float = 0.5) -> np.ndarray:
+    def correct(self, box: np.ndarray, conf: float | None = None) -> np.ndarray:
         """与 UKF 相同的更新，但用 SPD 投影替代简单对称化。"""
         cx, cy, w, h = _box_to_cxcywh(box)
         z = np.array([[cx], [cy], [w], [h]], dtype=np.float64)
@@ -612,7 +623,8 @@ class _Track:
                  filter_type: str = "ukf", mcukf_kernel_sigma: float = 1.0,
                  polygon: list[tuple[float, float]] | None = None,
                  velocity_clip: float = 0.30,
-                 nsa_enabled: bool = False, nsa_interval: float = 1.0, nsa_min: float = 0.1):
+                 nsa_enabled: bool = False, nsa_interval: float = 1.0, nsa_min: float = 0.1,
+                 nsa_conf_thresh: float = 0.6, nsa_interval_sec: float = 2.0):
         self.track_id = track_id
         self.label = label
         self.box = box.astype(np.float64)                     # [x1, y1, x2, y2]
@@ -633,6 +645,8 @@ class _Track:
         self.kalman.nsa_enabled = bool(nsa_enabled)
         self.kalman.nsa_interval = float(nsa_interval)
         self.kalman.nsa_min = float(nsa_min)
+        self.kalman.nsa_conf_thresh = float(nsa_conf_thresh)
+        self.kalman.nsa_interval_sec = float(nsa_interval_sec)
         # OCM 观测历史（§2.2）：observations 仅在匹配成功时写入
         # （由 DetectionTracker._update_track 驱动）；last_observation 以创建检测初始化
         self.observations: dict[int, np.ndarray] = {}
@@ -706,6 +720,8 @@ class _Track:
         new.nsa_enabled = old.nsa_enabled
         new.nsa_interval = old.nsa_interval
         new.nsa_min = old.nsa_min
+        new.nsa_conf_thresh = old.nsa_conf_thresh
+        new.nsa_interval_sec = old.nsa_interval_sec
         self.kalman = new
 
     def predict_polygon(self, old_box: np.ndarray, new_box: np.ndarray) -> None:
@@ -853,8 +869,10 @@ class DetectionTracker:
         max_output_misses: int = 0,  # 输出门控：misses 超过此值的 track 不输出（内部生命周期不受影响）
         # === 跟踪增强（docs/tracker-nsa-ocm-hmiou.md，默认全部关闭 opt-in）===
         nsa_enabled: bool = False,   # NSA-KF：观测噪声随检测置信度缩放
-        nsa_interval: float = 1.0,   # NSA 缩放区间
-        nsa_min: float = 0.1,        # NSA 乘子下界（保护性截断）
+        nsa_interval: float = 1.0,   # NSA 高置信度分支缩放区间
+        nsa_min: float = 0.1,        # NSA 高置信度分支乘子下界（保护性截断）
+        nsa_conf_thresh: float = 0.6,   # NSA 分段阈值（上游默认 0.6）
+        nsa_interval_sec: float = 2.0,  # NSA 低置信度分支 R 放大倍数（默认 2.0）
         ocm_enabled: bool = False,   # OCM：观测中心动量方向代价
         ocm_delta_t: int = 3,        # OCM 观测回溯帧数
         ocm_weight: float = 0.2,     # OCM 代价权重（对应 vdc_weight）
@@ -869,6 +887,8 @@ class DetectionTracker:
         self._nsa_enabled = bool(nsa_enabled)
         self._nsa_interval = float(nsa_interval)
         self._nsa_min = float(nsa_min)
+        self._nsa_conf_thresh = float(nsa_conf_thresh)
+        self._nsa_interval_sec = float(nsa_interval_sec)
         self._ocm_enabled = bool(ocm_enabled)
         self._ocm_delta_t = max(1, int(ocm_delta_t))
         self._ocm_weight = float(ocm_weight)
@@ -955,6 +975,8 @@ class DetectionTracker:
         nsa_enabled: bool | None = None,
         nsa_interval: float | None = None,
         nsa_min: float | None = None,
+        nsa_conf_thresh: float | None = None,
+        nsa_interval_sec: float | None = None,
         ocm_enabled: bool | None = None,
         ocm_delta_t: int | None = None,
         ocm_weight: float | None = None,
@@ -988,11 +1010,18 @@ class DetectionTracker:
             self._nsa_interval = float(nsa_interval)
         if nsa_min is not None:
             self._nsa_min = float(nsa_min)
-        if nsa_enabled is not None or nsa_interval is not None or nsa_min is not None:
+        if nsa_conf_thresh is not None:
+            self._nsa_conf_thresh = float(nsa_conf_thresh)
+        if nsa_interval_sec is not None:
+            self._nsa_interval_sec = float(nsa_interval_sec)
+        if (nsa_enabled is not None or nsa_interval is not None or nsa_min is not None
+                or nsa_conf_thresh is not None or nsa_interval_sec is not None):
             for trk in self._tracks.values():
                 trk.kalman.nsa_enabled = self._nsa_enabled
                 trk.kalman.nsa_interval = self._nsa_interval
                 trk.kalman.nsa_min = self._nsa_min
+                trk.kalman.nsa_conf_thresh = self._nsa_conf_thresh
+                trk.kalman.nsa_interval_sec = self._nsa_interval_sec
         if ocm_enabled is not None:
             self._ocm_enabled = bool(ocm_enabled)
         if ocm_delta_t is not None:
@@ -1115,7 +1144,9 @@ class DetectionTracker:
                              velocity_clip=self._velocity_clip,
                              nsa_enabled=self._nsa_enabled,
                              nsa_interval=self._nsa_interval,
-                             nsa_min=self._nsa_min)
+                             nsa_min=self._nsa_min,
+                             nsa_conf_thresh=self._nsa_conf_thresh,
+                             nsa_interval_sec=self._nsa_interval_sec)
                 # 初始化外观直方图
                 if det_hist[i] is not None:
                     trk.color_hist = det_hist[i]
@@ -1282,6 +1313,9 @@ class DetectionTracker:
             n_dets = len(det_indices)
             n_tracks = len(track_items)
             cost = np.full((n_dets, n_tracks), 1e6, dtype=np.float64)
+            # 门控通过掩码：匹配有效性以此为准（P0-1 修复：OCM 负代价可使合法
+            # pair 的 cost > 0.999，旧的 cost<0.999 判据会误丢合法匹配）
+            accepted = np.zeros((n_dets, n_tracks), dtype=bool)
 
             for di_idx, di in enumerate(det_indices):
                 det_box = boxes[di]
@@ -1327,10 +1361,11 @@ class DetectionTracker:
                                     angle_term = (math.pi * 0.5 - abs(theta)) / math.pi
                                     score += angle_term * self._ocm_weight * det_conf[di]
                         cost[di_idx, ti_idx] = 1.0 - score
+                        accepted[di_idx, ti_idx] = True
 
             row_ind, col_ind = linear_sum_assignment(cost)
             for r, c in zip(row_ind, col_ind):
-                if cost[r, c] < 0.999:  # 有效匹配（非门控）
+                if accepted[r, c]:  # 有效匹配（门控布尔掩码；不再以 cost 哨兵判定）
                     di = det_indices[r]
                     tid = track_items[c][0]
                     matched_track_ids.add(tid)

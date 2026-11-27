@@ -55,51 +55,71 @@ def _nsa_filter(enabled=True, interval=1.0, nsa_min=0.1):
     return kf
 
 
-def test_nsa_multiplier_monotonic_and_clip():
+def test_nsa_multiplier_segmented_semantics():
+    """上游 HybridSORT 分段语义（P0-2 修正）。"""
     kf = _nsa_filter()
-    # 乘子随 conf 单调不增：conf 越高观测噪声越小
-    m_low = kf._nsa_multiplier(0.2)
-    m_mid = kf._nsa_multiplier(0.5)
-    m_high = kf._nsa_multiplier(0.9)
-    assert m_low > m_mid > m_high
-    assert m_mid == pytest.approx(0.5)          # (1-0.5)*1.0
-    # nsa_min 截断：conf→1 时乘子不退化到 0（保护性改动）
+    # 高置信度分支（conf > 0.6）：(1-conf)·interval，缩 R
+    assert kf._nsa_multiplier(0.9) == pytest.approx(0.1)
+    assert kf._nsa_multiplier(0.9) < 1.0
+    assert kf._nsa_multiplier(0.61) == pytest.approx(0.39)
+    # 低置信度分支（conf <= 0.6）：nsa_interval_sec=2.0，放大 R 降权观测
+    assert kf._nsa_multiplier(0.3) == pytest.approx(2.0)
+    assert kf._nsa_multiplier(0.0) == pytest.approx(2.0)
+    # 边界 conf=0.6 走 interval_sec（严格大于才进高置信度分支）
+    assert kf._nsa_multiplier(0.6) == pytest.approx(2.0)
+    # nsa_min 仅在高置信度分支截断：conf→1 乘子不退化到 0（保护性）
     assert kf._nsa_multiplier(1.0) == pytest.approx(0.1)
     assert kf._nsa_multiplier(0.999) == pytest.approx(0.1)
-    # interval 缩放
-    kf2 = _nsa_filter(interval=2.0)
-    assert kf2._nsa_multiplier(0.5) == pytest.approx(1.0)  # clip 上界 1.0
+    # 低置信度分支不受 nsa_min 影响
+    kf2 = _nsa_filter(nsa_min=0.5)
+    assert kf2._nsa_multiplier(0.3) == pytest.approx(2.0)
+    # interval 缩放（高置信度分支）
+    kf3 = _nsa_filter(interval=2.0)
+    assert kf3._nsa_multiplier(0.9) == pytest.approx(0.2)
+
+
+def test_nsa_multiplier_none_is_neutral():
+    """conf=None → 1.0（无 NSA，真正中性，缺省安全）。"""
+    kf = _nsa_filter()
+    assert kf._nsa_multiplier(None) == 1.0
 
 
 def test_nsa_disabled_multiplier_is_one():
     kf = _nsa_filter(enabled=False)
     assert kf._nsa_multiplier(0.0) == 1.0
     assert kf._nsa_multiplier(0.7) == 1.0
+    assert kf._nsa_multiplier(None) == 1.0
 
 
 def test_nsa_conf_default_neutral():
-    """conf 缺省 0.5（中性）：correct(box) 与 correct(box, 0.5) 逐位一致。"""
+    """conf 缺省 None（真正中性）：correct(box) 与关闭 NSA 逐位一致。"""
     box = np.array([0.12, 0.11, 0.32, 0.42])
-    kf1 = _nsa_filter()
-    kf2 = _nsa_filter()
+    kf1 = _nsa_filter()                    # NSA 开启，conf=None
+    kf2 = _nsa_filter(enabled=False)       # NSA 关闭基线
     kf1.predict(); kf2.predict()
-    out1 = kf1.correct(box)
-    out2 = kf2.correct(box, 0.5)
+    out1 = kf1.correct(box)                # conf 缺省 None
+    out2 = kf2.correct(box, 0.3)           # 关闭时 conf 不影响
     np.testing.assert_array_equal(out1, out2)
+    # 显式 None 与缺省一致（用未更新过的新滤波器）
+    kf3 = _nsa_filter()
+    kf3.predict()
+    np.testing.assert_array_equal(kf3.correct(box, None), out1)
 
 
 def test_nsa_low_conf_trusts_observation_less():
-    """低置信度观测 → R_eff 更大 → 状态更新更靠近预测（离观测更远）。"""
+    """与无 NSA 基线对比：低 conf 时 R 放大（更新更小），高 conf 时 R 缩小（更新更大）。"""
     box = np.array([0.20, 0.20, 0.40, 0.50])  # 相对预测明显偏移的观测
-    results = {}
-    for conf in (0.9, 0.3):
-        kf = _nsa_filter()
+
+    def update_magnitude(nsa_on, conf):
+        kf = _nsa_filter(enabled=nsa_on)
         kf.predict()
         pred = kf.to_box().copy()
-        corrected = kf.correct(box, conf)
-        results[conf] = float(np.abs(corrected - pred).sum())
-    # conf=0.9（R 小）比 conf=0.3（R 大）更新幅度更大
-    assert results[0.9] > results[0.3] > 0.0
+        return float(np.abs(kf.correct(box, conf) - pred).sum())
+
+    base = update_magnitude(False, 0.5)          # 无 NSA 基线
+    low = update_magnitude(True, 0.3)            # R×2.0 → 更信预测
+    high = update_magnitude(True, 0.9)           # R×0.1 → 更信观测
+    assert 0.0 < low < base < high
 
 
 def test_nsa_default_off_bit_identical():
@@ -116,14 +136,16 @@ def test_nsa_default_off_bit_identical():
 
 
 def test_nsa_mcukf_manifold_accept_conf():
-    """MCUKF / Manifold 同一 correct 入口接受 conf 且默认关闭不变。"""
+    """MCUKF / Manifold 同一 correct 入口接受 conf；缺省 None 与关闭逐位一致。"""
     from ai.tracker import _DetectionMCUKF, _DetectionManifoldUKF
     box = np.array([0.12, 0.11, 0.32, 0.42])
     for cls in (_DetectionMCUKF, _DetectionManifoldUKF):
+        # NSA 开启 + conf=None（缺省）== NSA 关闭
         kf1, kf2 = cls(np.array([0.1, 0.1, 0.3, 0.4])), cls(np.array([0.1, 0.1, 0.3, 0.4]))
+        kf1.nsa_enabled = True
         kf1.predict(); kf2.predict()
         np.testing.assert_array_equal(kf1.correct(box), kf2.correct(box, 0.5))
-        # 开启 NSA 后低置信度更新幅度更小
+        # 开启 NSA：高置信度更新幅度 > 低置信度（R 缩放方向正确）
         kf3, kf4 = cls(np.array([0.1, 0.1, 0.3, 0.4])), cls(np.array([0.1, 0.1, 0.3, 0.4]))
         for kf in (kf3, kf4):
             kf.nsa_enabled = True
@@ -190,25 +212,75 @@ def test_ocm_angle_term_sign_and_magnitude():
 
 
 def test_ocm_prefers_direction_consistent_detection():
-    """OCM 开启后，方向一致的检测获得更高 score（变向检测被抑制）。
+    """OCM 开启后，方向一致的检测获得更高 score 并被匈牙利选中（注入式确定性场景）。
 
-    构造：track 匀速右移；某帧出现两个候选检测——右侧继续前进 vs 左侧回退，
-    两者 IoU 均过门控。OCM 开启时更新后 box 应比关闭时更靠右。
+    track box=[0.30,0.40]、velocity 向右、age-3 观测中心 0.37；
+    两个对称候选（IoU 相同）：右侧 det（D 同向，angle_term=+0.5）与
+    左侧 det（D 反向，angle_term=-0.5）→ OCM 使右侧严格胜出。
     """
-    def run(ocm_on):
-        t = DetectionTracker(backend="python", ocm_enabled=ocm_on, ocm_weight=0.2)
-        for f in range(6):
-            t.update([make_det(0.1 + 0.02 * f, 0.1, 0.18 + 0.02 * f, 0.3)])
-        # 两个候选：继续前进（方向一致）与明显回退（方向冲突）
-        t.update([
-            make_det(0.23, 0.1, 0.31, 0.3, conf=0.9),   # 一致
-            make_det(0.12, 0.1, 0.20, 0.3, conf=0.9),   # 回退
-        ])
-        return next(iter(t._tracks.values())).box[0]
+    t = DetectionTracker(backend="python", ocm_enabled=True, ocm_weight=0.5)
+    t.update([make_det(0.30, 0.10, 0.40, 0.50, conf=0.9)])
+    trk = next(iter(t._tracks.values()))
+    trk.age = 5
+    trk.velocity = (0.0, 1.0)  # 向右
+    trk.observations = {2: np.array([0.32, 0.10, 0.42, 0.50])}  # 中心 0.37
+    trk.last_observation = np.array([0.32, 0.10, 0.42, 0.50])
+    det_left = make_det(0.27, 0.10, 0.37, 0.50, conf=0.9)   # cx 0.32 < 0.37 → 反向
+    det_right = make_det(0.33, 0.10, 0.43, 0.50, conf=0.9)  # cx 0.38 > 0.37 → 同向
+    dets = [det_left, det_right]
+    boxes = np.array([[d["x1"], d["y1"], d["x2"], d["y2"]] for d in dets])
+    matched_tids, matched_dis = t._match_hungarian(
+        dets, boxes, [None, None], np.array([0.9, 0.9]),
+    )
+    assert matched_tids == {trk.track_id}
+    assert matched_dis == {1}, "OCM 应使方向一致的右侧检测胜出（严格）"
 
-    x_on = run(True)
-    x_off = run(False)
-    assert x_on >= x_off  # OCM 使匹配更偏向方向一致的检测
+
+def test_ocm_negative_cost_pair_still_accepted():
+    """P0-1 回归：OCM 负代价使 cost>0.999 时，门控通过的合法 pair 不得被丢。
+
+    构造 iou≈0.08、速度反平行（θ=π → angle_term=-0.5）、det_conf=0.95、
+    ocm_weight=1.0 的 track×det：score≈0.16-0.475<0 ⇒ cost>0.999，
+    旧的 cost<0.999 判据会误丢；修复后以 accepted 掩码判定仍接受。
+    """
+    t = DetectionTracker(backend="python", ocm_enabled=True, ocm_weight=1.0)
+    t.update([make_det(0.30, 0.10, 0.40, 0.50, conf=0.95)])  # track box=[0.30,0.10,0.40,0.50]
+    trk = next(iter(t._tracks.values()))
+    # 注入确定性 OCM 状态：速度向右，age-3 观测中心在 det 右侧（反平行）
+    trk.age = 5
+    trk.velocity = (0.0, 1.0)
+    trk.observations = {2: np.array([0.32, 0.10, 0.42, 0.50])}
+    trk.last_observation = np.array([0.32, 0.10, 0.42, 0.50])
+    # det：中心 0.2648（prev_obs 中心 0.37 左侧 → θ=π）；
+    # 与 track box iou≈0.08（>0.05 且中心距 0.085<0.125 过门控回退）
+    det = make_det(0.2148, 0.10, 0.3148, 0.50, conf=0.95)
+    dets = [det]
+    boxes = np.array([[det["x1"], det["y1"], det["x2"], det["y2"]]])
+    matched_tids, matched_dis = t._match_hungarian(dets, boxes, [None], np.array([0.95]))
+    assert matched_tids == {trk.track_id}, "OCM 负代价的合法 pair 被误丢（P0-1 回归）"
+    assert matched_dis == {0}
+
+
+def test_ocm_negative_cost_pair_accepted_dual_backend():
+    """P0-1 双端：匀速右移后接反平行低 IoU 检测，双端均保持接受（单 track、同 ID）。"""
+    def det(cx, conf=0.95):
+        return make_det(cx - 0.05, 0.10, cx + 0.05, 0.50, conf=conf)
+
+    def run(backend):
+        t = DetectionTracker(backend=backend, ocm_enabled=True, ocm_weight=1.0)
+        for f in range(5):
+            t.update([det(0.30 + 0.02 * f)])
+        out = t.update([det(0.31)])  # 反平行 + iou≈0.08
+        return t, out
+
+    tp, op = run("python")
+    tr, orr = run("rust")
+    assert len(tp._tracks) == 1, "python：反平行 det 应匹配既有 track 而非新建"
+    assert [o["track_id"] for o in op] == [1]
+    assert [o["track_id"] for o in orr] == [1]
+    for a, b in zip(op, orr):
+        for k in ("x1", "y1", "x2", "y2", "confidence"):
+            assert abs(a[k] - b[k]) <= 1e-6
 
 
 def test_ocm_velocity_none_cost_zero():
