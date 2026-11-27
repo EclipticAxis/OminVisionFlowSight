@@ -1,7 +1,7 @@
 {
   "meta": {
     "tag": "enhance_v2_dancetrack_val",
-    "date": "2026-11-27T10:53:21.597813+00:00",
+    "date": "2026-11-27T11:17:00.711675+00:00",
     "dataset": "dancetrack",
     "split": "val",
     "gt_dir": "G:\\基准测试\\DanceTrack\\val",
@@ -11,7 +11,20 @@
     "stride": 1,
     "filter_type": "ukf",
     "backend": "rust",
-    "revision": "3278848024614fa5e5fec915220df6b96e3c0dbb",
+    "revision": "814c8f4994188ded123b189c1fa9316d37018b0b",
+    "tracker_revisions": {
+      "omintrack_ukf_rust_s1_priv": "3278848024614fa5e5fec915220df6b96e3c0dbb",
+      "omintrack_ukf_rust_s4_priv": "3278848024614fa5e5fec915220df6b96e3c0dbb",
+      "omintrack_auto_rust_s1_priv": "3278848024614fa5e5fec915220df6b96e3c0dbb",
+      "ukf_nsa_s1_priv_v2": "71f344a3796000dccefa3619e9f6a16edf07eb26",
+      "ukf_nsa_ocm_s1_priv_v2": "71f344a3796000dccefa3619e9f6a16edf07eb26",
+      "ukf_full_s1_priv_v2": "71f344a3796000dccefa3619e9f6a16edf07eb26",
+      "ukf_full_s4_priv_v2": "71f344a3796000dccefa3619e9f6a16edf07eb26",
+      "auto_nsa_s1_priv_v2": "71f344a3796000dccefa3619e9f6a16edf07eb26",
+      "auto_nsa_ocm_s1_priv_v2": "71f344a3796000dccefa3619e9f6a16edf07eb26",
+      "auto_full_s1_priv_v2": "71f344a3796000dccefa3619e9f6a16edf07eb26"
+    },
+    "iou_threshold": 0.25,
     "trackeval_version": "1.0.dev1",
     "evaluated_sequences": [
       "dancetrack0004",
