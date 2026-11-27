@@ -78,12 +78,16 @@ impl Track {
         nsa_enabled: bool,
         nsa_interval: f64,
         nsa_min: f64,
+        nsa_conf_thresh: f64,
+        nsa_interval_sec: f64,
     ) -> Track {
         let mut kalman = KalmanFilter::new(kind, &box_, velocity_clip, kernel_sigma);
         // NSA-KF 配置透传到滤波器（默认关闭）
         kalman.nsa_enabled = nsa_enabled;
         kalman.nsa_interval = nsa_interval;
         kalman.nsa_min = nsa_min;
+        kalman.nsa_conf_thresh = nsa_conf_thresh;
+        kalman.nsa_interval_sec = nsa_interval_sec;
         let prev_polygon = polygon.clone();
         Track {
             track_id,
@@ -155,6 +159,8 @@ impl Track {
         new_kf.nsa_enabled = self.kalman.nsa_enabled;
         new_kf.nsa_interval = self.kalman.nsa_interval;
         new_kf.nsa_min = self.kalman.nsa_min;
+        new_kf.nsa_conf_thresh = self.kalman.nsa_conf_thresh;
+        new_kf.nsa_interval_sec = self.kalman.nsa_interval_sec;
         self.kalman = new_kf;
     }
 
@@ -314,6 +320,8 @@ pub struct TrackerParams {
     pub nsa_enabled: bool,
     pub nsa_interval: f64,
     pub nsa_min: f64,
+    pub nsa_conf_thresh: f64,
+    pub nsa_interval_sec: f64,
     pub ocm_enabled: bool,
     pub ocm_delta_t: i32,
     pub ocm_weight: f64,
@@ -341,6 +349,8 @@ impl Default for TrackerParams {
             nsa_enabled: false,
             nsa_interval: 1.0,
             nsa_min: 0.1,
+            nsa_conf_thresh: 0.6,
+            nsa_interval_sec: 2.0,
             ocm_enabled: false,
             ocm_delta_t: 3,
             ocm_weight: 0.2,
@@ -372,6 +382,8 @@ pub struct TrackerCore {
     pub nsa_enabled: bool,
     pub nsa_interval: f64,
     pub nsa_min: f64,
+    pub nsa_conf_thresh: f64,
+    pub nsa_interval_sec: f64,
     pub ocm_enabled: bool,
     pub ocm_delta_t: i32,
     pub ocm_weight: f64,
@@ -407,6 +419,8 @@ impl TrackerCore {
             nsa_enabled: p.nsa_enabled,
             nsa_interval: p.nsa_interval,
             nsa_min: p.nsa_min,
+            nsa_conf_thresh: p.nsa_conf_thresh,
+            nsa_interval_sec: p.nsa_interval_sec,
             ocm_enabled: p.ocm_enabled,
             ocm_delta_t: p.ocm_delta_t.max(1),
             ocm_weight: p.ocm_weight,
@@ -493,6 +507,8 @@ impl TrackerCore {
         nsa_enabled: Option<bool>,
         nsa_interval: Option<f64>,
         nsa_min: Option<f64>,
+        nsa_conf_thresh: Option<f64>,
+        nsa_interval_sec: Option<f64>,
         ocm_enabled: Option<bool>,
         ocm_delta_t: Option<i32>,
         ocm_weight: Option<f64>,
@@ -532,11 +548,24 @@ impl TrackerCore {
         if let Some(v) = nsa_min {
             self.nsa_min = v;
         }
-        if nsa_enabled.is_some() || nsa_interval.is_some() || nsa_min.is_some() {
+        if let Some(v) = nsa_conf_thresh {
+            self.nsa_conf_thresh = v;
+        }
+        if let Some(v) = nsa_interval_sec {
+            self.nsa_interval_sec = v;
+        }
+        if nsa_enabled.is_some()
+            || nsa_interval.is_some()
+            || nsa_min.is_some()
+            || nsa_conf_thresh.is_some()
+            || nsa_interval_sec.is_some()
+        {
             for trk in self.tracks.values_mut() {
                 trk.kalman.nsa_enabled = self.nsa_enabled;
                 trk.kalman.nsa_interval = self.nsa_interval;
                 trk.kalman.nsa_min = self.nsa_min;
+                trk.kalman.nsa_conf_thresh = self.nsa_conf_thresh;
+                trk.kalman.nsa_interval_sec = self.nsa_interval_sec;
             }
         }
         if let Some(v) = ocm_enabled {
@@ -673,6 +702,8 @@ impl TrackerCore {
                     self.nsa_enabled,
                     self.nsa_interval,
                     self.nsa_min,
+                    self.nsa_conf_thresh,
+                    self.nsa_interval_sec,
                 );
                 if let Some(Some(h)) = det_hist.get(i) {
                     trk.color_hist = Some(h.clone());
@@ -845,6 +876,9 @@ impl TrackerCore {
             let n_dets = local_dets.len();
             let n_tracks = track_items.len();
             let mut cost = vec![vec![1e6f64; n_tracks]; n_dets];
+            // 门控通过掩码：匹配有效性以此为准（P0-1 修复：OCM 负代价可使合法
+            // pair 的 cost > 0.999，旧的 cost<0.999 判据会误丢合法匹配）
+            let mut accepted = vec![vec![false; n_tracks]; n_dets];
 
             for (di_idx, &di) in local_dets.iter().enumerate() {
                 let det = &dets[di];
@@ -901,13 +935,14 @@ impl TrackerCore {
                             }
                         }
                         cost[di_idx][ti_idx] = 1.0 - score;
+                        accepted[di_idx][ti_idx] = true;
                     }
                 }
             }
 
             let pairs = crate::hungarian::hungarian(&cost);
             for (r, c) in pairs {
-                if cost[r][c] < 0.999 {
+                if accepted[r][c] { // 有效匹配（门控布尔掩码；不再以 cost 哨兵判定）
                     let di = local_dets[r];
                     let tid = track_items[c];
                     matched_tids.insert(tid);
@@ -1078,7 +1113,7 @@ fn update_track(
     ocm_delta_t: Option<i32>,
 ) -> Result<(), String> {
     // 卡尔曼校正（conf 供 NSA-KF 缩放观测噪声）
-    let corrected_box = trk.kalman.correct(new_box, det.confidence)?;
+    let corrected_box = trk.kalman.correct(new_box, Some(det.confidence))?;
 
     // AUTO 模式：记录 NIS 和 Cholesky 失败
     if let Some(a) = adaptor {

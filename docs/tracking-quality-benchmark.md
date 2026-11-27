@@ -1,10 +1,12 @@
 # 跟踪质量量化基准：MOT17 / MOT20 / DanceTrack
 
-> **版本**：0.2.0 — 2026-11-27
+> **版本**：0.2.1 — 2026-11-27
 > **范围**：批次 0 评测基建的基准选型与协议定型；约束后续所有滤波器/关联层改造（NSA-KF、OCM、HMIoU、TCM、ORU 等）的量化验收方式。不涉及跟踪器行为变更。
 > **状态**：M0 主体完成——基建重建（34 passed + 1 skipped，含 TrackEval 端到端合成用例），DanceTrack val 与 MOT17 FRCNN 基线均已落盘（§6.1），双后端真实基准逐位一致；MOT20 暂未下载（泛化抽查可后补）。
 >
 > **0.2.0 变更**：数据集根目录定为 `G:\基准测试`（用户指定，脚本参数化）；MOTChallenge 网站已于 2026-04-16 转为静态存档、**提交评测通道关闭**，MOT17/20 test 改为"存档 leaderboard 横向参照"（§2、§7）；DanceTrack 官方源为 HF `noahcao/dancetrack`，本机 huggingface.co 不可达，经 hf-mirror.com 下载且**仅需 val.zip**（§2、§5.2）。
+>
+> **0.2.1 变更（PR #21 审计 P0-3 + P1-5）**：① 回归门槛统一为 HOTA 绝对回退 **0.002**（§6，取代 0.2 笔误）；② 评测口径护栏——`evaluate_trackeval.py` 期望序列默认 GT 全量（或 `--seqs`），tracker 结果缺序列**立即报错并列出**（不再静默交集收窄），报告 meta 写入 `evaluated_sequences`，`ensure_seqmap` 缺失才生成、不一致默认报错（仅 `--allow-seqmap-rewrite` 才覆写并记录 `seqmap_rewritten`）。
 
 ---
 
@@ -57,7 +59,7 @@
 
 `benchmark/` 曾存在 `evaluate_mot17_trackeval`、`prepare_mot17_public_data`、`mot17_tracking_experiment`、`mot17_third_party_baselines`、`mot_quality_e2e` 等脚本（现仅存 `__pycache__` 编译缓存），源文件已在清理中丢失。**不反编译 pyc**，按 TrackEval 标准结构重写，避免继承不可审计的逻辑。
 
-### 5.2 组成（待实现，属后续 PR）
+### 5.2 组成（已实现）
 
 | 组件 | 职责 |
 |------|------|
@@ -75,7 +77,7 @@
 
 1. **基线先行**：任何跟踪改造合入前，当前 main 必须在 DanceTrack val + MOT17 train（私有检测 + FRCNN 公开检测两协议）留有基线报告。
 2. **逐批次对照**：批次 1（滤波器层）/ 批次 2（关联层）/ 批次 3（遮挡恢复）各自合入时附前后对照表；改善必须引用具体指标，禁止只写"效果更好"。
-3. **回归门槛**：DanceTrack val HOTA 回退 > 0.2、或 MOT17 IDSW 上升，必须在 PR 中给出解释与取舍依据；无说明不得合入。
+3. **回归门槛**：DanceTrack val HOTA 绝对回退 > 0.002（即 0.2 个百分点）、或 MOT17 IDSW 上升，必须在 PR 中给出解释与取舍依据；无说明不得合入。（0.2.1 修订：与 tracker-nsa-ocm-hmiou §4 对齐，统一为绝对值 0.002，取代早期 0.2 的笔误——基线 HOTA 仅 0.2~0.4，0.2 门槛等于无约束。）
 4. **困难基线诚实披露**：MOTA 为负或极低的序列/配置，对照时禁止只引用单侧数字（沿用 mcukf-irls-correction §4 的披露惯例）。
 
 ### 6.1 基线落盘记录（2026-11-27，revision 32788480）

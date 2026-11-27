@@ -1,8 +1,10 @@
 # 跟踪增强批次 1+2 合包：NSA-KF + OCM 方向代价 + HMIoU
 
-> **版本**：0.1.0 — 2026-11-27
+> **版本**：0.2.0 — 2026-11-27
 > **范围**：`ai/tracker.py` 与 `rust/omintrack/` 双实现；离线评测 runner 增加开关。三个机制**默认全部关闭（opt-in）**，默认路径行为不变（既有 golden / 等价测试不需重生成），开启路径由新增测试覆盖。
-> **状态**：已实现并通过验收（2026-11-27）。双端同步 + Rust release 重建；新增 21 项增强测试，全套件 1501 passed + 1 skipped；默认路径 golden 未变（`git status tests/golden/` 为空）；MOT 对照无回归，结果见 §4.1。
+> **状态**：已实现并通过验收（2026-11-27）。双端同步 + Rust release 重建；默认路径 golden 未变；MOT 对照无回归。
+>
+> **0.2.0 变更（PR #21 事后审计修复，详见 §7）**：① P0-1 OCM 负代价会冲破 `cost<0.999` 哨兵 → 改独立 `accepted` 布尔掩码；② P0-2 NSA 误用单段 clip≤1 公式（低置信度反被加信任）→ 改回上游**分段语义**，`conf` 缺省改 `None`（真正中性）；③ P0-3 评测口径护栏（见 benchmark 文档）。NSA 开启路径行为因此改变，**0.1.0 的 +nsa 对照数据作废**，以 §4.2 的 v2 为准。
 
 ---
 
@@ -20,10 +22,14 @@
 
 ### 2.1 NSA-KF（观测噪声自适应）
 
-- 位置：`_DetectionUKF.correct()`（MCUKF / Manifold 继承同一入口，语义保持一致）。
-- 公式：`R_eff = R_scale · clip((1 - conf) · nsa_interval, nsa_min, 1.0)`，其中 `R_scale = self._make_r(w, h)`（既有尺度自适应保留），`conf` 为当前检测置信度。
-- 参数：`nsa_enabled=False`（关）、`nsa_interval=1.0`、`nsa_min=0.1`。
-- 偏离原文声明：原公式 `R ← (1-conf)·interval·R` 在 conf→1 时 R→0；本实现以 `nsa_min=0.1` 为乘子下界防 R 退化（保护性改动，非原文行为）。缺省 conf=0.5（中性），runner/线上应传入真实 conf。
+- 位置：`_DetectionUKF.correct(box, conf=None)`（MCUKF / Manifold 继承同一入口，语义保持一致）。
+- **分段公式（上游 HybridSORT `kalmanfilter_score.py` 真实结构）**：
+  - `conf is None` → 乘子 `1.0`（**真正中性**，缺省安全，忘记传 conf 无任何 NSA 效果）；
+  - `conf > nsa_conf_thresh`（默认 0.6）→ 乘子 `max((1-conf)·nsa_interval, nsa_min)`（高置信度**缩 R=信任观测**）；
+  - `conf <= nsa_conf_thresh` → 乘子 `nsa_interval_sec`（默认 2.0，低置信度**放大 R=降权观测**）。
+- 参数：`nsa_enabled=False`、`nsa_interval=1.0`、`nsa_interval_sec=2.0`、`nsa_conf_thresh=0.6`、`nsa_min=0.1`。
+- 偏离原文声明：`nsa_min=0.1` 仅在高置信度分支防 conf→1 时 R→0（保护性截断，非原文行为）；低置信度分支的 `interval_sec` 放大是上游原有结构。
+- ~~缺省 conf=0.5（中性）~~（0.1.0 错误表述，已删除）：0.5 在分段语义下落入低置信度分支会放大 R，**不是中性**；缺省改为 `None`。
 - 与既有 `_adapt_q`（NIS→Q）正交，互不替代。NIS 统计仍用**未 NSA 缩放前**的 R 计算 S（保持 AUTO 适配器口径不变）——即：先按旧逻辑算 NIS/S 用于监控，再用 R_eff 参与 K 与状态/协方差更新。注意：NSA 只改变 K 与 P 更新，不改 AUTO 监控信号语义。
 
 ### 2.2 OCM（观测中心动量方向代价）
@@ -41,6 +47,7 @@
 - 融合：在既有 `score` 上**加** `ocm_cost`（与 OC-SORT 叠加到 IoU 求最大一致）：`score += ocm_cost`；`cost = 1 - score` 不变。ReID 分支同样叠加。
 - 参数：`ocm_enabled=False`、`ocm_delta_t=3`、`ocm_weight=0.2`（对应 vdc_weight）。
 - 门控（IoU 阈值 / 中心距回退）不变；OCM 只影响 score 排序，不改变门控通过性。
+- **0.2.0 修复（P0-1）**：门控通过性由独立 `accepted: bool[n_dets,n_tracks]` 掩码表达，匈牙利匹配后判据为 `accepted[r,c]`，**不再用 `cost<0.999` 数值哨兵**（旧实现中 OCM 负项可使 cost≥0.999 静默作废合法匹配）。cost 矩阵仍用 1e6 让匈牙利跳过门控 pair，分配行为不变。
 
 ### 2.3 HMIoU（高度调制 IoU）
 
@@ -70,7 +77,9 @@
 
 对 DanceTrack val + MOT17 FRCNN 跑四组对照（rust 后端，stride 1）：baseline（已落盘）vs `+nsa` vs `+nsa+ocm` vs `+nsa+ocm+hmiou`；ukf 与 auto 各一组。验收按方案 §6：DanceTrack val HOTA 回退 >0.002（绝对值）或 MOT17 IDSW 上升需书面说明；预期 AssA/IDSW 改善。
 
-### 4.1 实测对照（2026-11-27，rust，stride 1）
+### 4.1 实测对照 v1（2026-11-27，rust，stride 1）——⚠️ 已作废
+
+> 本节的 `+nsa` 系列基于 0.1.0 的**错误 NSA 语义**（单段 clip≤1，低置信度反被加信任），且 `+ocm` 系列受 P0-1 的 cost 哨兵 bug 影响。数值仅存档，**不作为结论依据**；正确结果见 §4.2。
 
 DanceTrack val（YOLOv8n 私有检测，25 序列）：
 
@@ -100,9 +109,44 @@ MOT17 FRCNN（7 序列）：
 - 幅度诚实声明：DanceTrack HOTA +0.009、MOT17 +0.024~0.031，属"小改有效"量级；距 Deep OC-SORT（DanceTrack≈0.55）的差距主因是检测器（DetA≈0.50）与尚未实现的 ORU/OCR/TCM，而非本包。
 - 报告：`benchmark/results/20261127_enhance_dancetrack_val.{json,md}`、`20261127_enhance_mot17_frcnn.{json,md}`。
 
+### 4.2 实测对照 v2（2026-11-27，修复后 HEAD，NSA 分段语义 + accepted 掩码，rust）
+
+DanceTrack val（YOLOv8n 私有检测，全 25 序列）：
+
+| 配置 | HOTA | AssA | DetA | IDF1 | IDSW |
+|------|------|------|------|------|------|
+| ukf baseline s1 | 0.2045 | 0.0842 | 0.5035 | 0.1827 | 8470 |
+| ukf baseline s4 | 0.2170 | 0.1050 | 0.4612 | 0.2128 | 6730 |
+| +nsa s1 | 0.2122 | 0.0886 | 0.5161 | 0.1842 | 7995 |
+| +nsa+ocm s1 | 0.2124 | 0.0890 | 0.5155 | 0.1862 | 8024 |
+| +full s1 | 0.2149 | 0.0910 | 0.5156 | 0.1880 | 7982 |
+| **+full s4** | **0.2221** | **0.1090** | 0.4654 | **0.2188** | 7020 |
+| auto +nsa s1 | 0.2122 | 0.0887 | 0.5161 | 0.1843 | 7995 |
+| auto +full s1 | **0.2151** | **0.0911** | 0.5159 | 0.1881 | 7985 |
+
+MOT17 FRCNN（7 序列）：
+
+| 配置 | HOTA | AssA | DetA | IDF1 | IDSW |
+|------|------|------|------|------|------|
+| ukf baseline s1 | 0.3961 | 0.3765 | 0.4188 | 0.4639 | 1131 |
+| ukf baseline s4 | 0.4123 | 0.4117 | 0.4173 | 0.4766 | 1371 |
+| +nsa s1 | 0.4152 | 0.4001 | 0.4327 | 0.4824 | 1033 |
+| +full s1 | 0.4187 | 0.4064 | 0.4333 | 0.4856 | 1064 |
+| +full s4 | 0.4240 | 0.4292 | 0.4228 | 0.4864 | 1390 |
+| auto +nsa s1 | 0.4270 | 0.4193 | 0.4367 | 0.4955 | 1028 |
+| auto +full s1 | **0.4288** | 0.4228 | 0.4367 | 0.4973 | 1060 |
+
+结论（含对审查 P0/P1 的回应）：
+- **NSA 分段语义正确且更优**：DanceTrack 上 +nsa 使 IDSW 8470→**7995**（优于 0.1.0 错误语义的 8360），HOTA 0.2045→0.2122；MOT17 上 0.3961→0.4152。方向修正带来了实打实的额外收益。
+- **P0-1 修复有效**：v2 中 OCM 叠加不再帮倒忙（DanceTrack 上 nsa→nsa+ocm：0.2122→0.2124 不再倒退；0.1.0 曾为 0.2126→0.2110 倒退）。
+- **P1-1（stride-4 对照）**：`+full s4`（0.2221）> `s4 baseline`（0.2170），**增强包在 stride 4 下同样有净收益**（HOTA +0.0051、AssA +0.004），证明收益来自机制而非仅 stride 路径。`+full s4` 为 DanceTrack 全场最佳。
+- **P1-2（auto 消融）**：MOT17 上机制贡献 = ukf 的 +0.0226（0.3961→0.4187）；AUTO 选型额外贡献 ≈ +0.010（ukf_full 0.4187 → auto_full 0.4288）。两者已拆开，头条数字不再混合归因。
+- 全部配置无回归（HOTA ≥ 基线，IDSW 多数下降）。
+- 报告：`benchmark/results/20261127_enhance_v2_dancetrack_val.{json,md}`、`20261127_enhance_v2_mot17_frcnn.{json,md}`（meta 含 `evaluated_sequences` 与真实 HEAD revision）。
+
 ## 5. 引用（公式来源，逐字核对）
 
-- OC-SORT：`github.com/noahcao/OC_SORT` → `trackers/ocsort_tracker/association.py`（`associate`/`speed_direction_batch`）、`ocsort.py`（`speed_direction`、`k_previous_obs`、velocity/observations 维护）。
+- OC-SORT：`github.com/noahcao/OC_SORT` → `trackers/ocsort_tracker/association.py`（`associate`/`speed_direction_batch`）、`ocsort.py`（`speed_direction`、`k_previous_obs`、velocity/observations 维护）。（规范上游 `github.com/MCG-NJU/OCSort` 不可达——2026-11-27 实测 404；`noahcao/OC_SORT` 为论文一作 Jinkun Cao 的官方仓库，非 fork，予以保留。）
 - Hybrid-SORT：`github.com/ymzis69/HybridSORT` → `trackers/hybird_sort_tracker/association.py`（`hmiou`）、`kalmanfilter_score.py`（NSA-KF 行：`R = (1-confidence)·nsa_kalman_interval·R`）。
 
 ## 6. 维护指南

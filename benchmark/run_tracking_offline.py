@@ -276,7 +276,8 @@ def make_tracker(*, filter_type: str, backend: str, max_output_misses: int,
                  matching_strategy: str, iou_threshold: float, max_misses: int,
                  min_hits_to_show: int,
                  nsa_enabled: bool = False, nsa_interval: float = 1.0,
-                 nsa_min: float = 0.1, ocm_enabled: bool = False,
+                 nsa_min: float = 0.1, nsa_conf_thresh: float = 0.6,
+                 nsa_interval_sec: float = 2.0, ocm_enabled: bool = False,
                  ocm_delta_t: int = 3, ocm_weight: float = 0.2,
                  hmiou_enabled: bool = False) -> TrackerLike:
     """构造 DetectionTracker（backend 经 __new__ 分发 python/rust，显式 rust 不可用时抛错）。
@@ -296,6 +297,8 @@ def make_tracker(*, filter_type: str, backend: str, max_output_misses: int,
         nsa_enabled=nsa_enabled,
         nsa_interval=nsa_interval,
         nsa_min=nsa_min,
+        nsa_conf_thresh=nsa_conf_thresh,
+        nsa_interval_sec=nsa_interval_sec,
         ocm_enabled=ocm_enabled,
         ocm_delta_t=ocm_delta_t,
         ocm_weight=ocm_weight,
@@ -347,6 +350,8 @@ def run(
     nsa_enabled: bool = False,
     nsa_interval: float = 1.0,
     nsa_min: float = 0.1,
+    nsa_conf_thresh: float = 0.6,
+    nsa_interval_sec: float = 2.0,
     ocm_enabled: bool = False,
     ocm_delta_t: int = 3,
     ocm_weight: float = 0.2,
@@ -391,6 +396,8 @@ def run(
         "nsa_enabled": nsa_enabled,
         "nsa_interval": nsa_interval,
         "nsa_min": nsa_min,
+        "nsa_conf_thresh": nsa_conf_thresh,
+        "nsa_interval_sec": nsa_interval_sec,
         "ocm_enabled": ocm_enabled,
         "ocm_delta_t": ocm_delta_t,
         "ocm_weight": ocm_weight,
@@ -413,6 +420,7 @@ def run(
             matching_strategy=matching_strategy, iou_threshold=iou_threshold,
             max_misses=max_misses, min_hits_to_show=min_hits_to_show,
             nsa_enabled=nsa_enabled, nsa_interval=nsa_interval, nsa_min=nsa_min,
+            nsa_conf_thresh=nsa_conf_thresh, nsa_interval_sec=nsa_interval_sec,
             ocm_enabled=ocm_enabled, ocm_delta_t=ocm_delta_t, ocm_weight=ocm_weight,
             hmiou_enabled=hmiou_enabled,
         )
@@ -475,7 +483,11 @@ def build_parser():
     p.add_argument("--nsa", dest="nsa_enabled", action="store_true",
                    help="启用 NSA-KF（观测噪声随置信度缩放，默认关闭）")
     p.add_argument("--nsa-interval", type=float, default=1.0, help="NSA 缩放区间（默认 1.0）")
-    p.add_argument("--nsa-min", type=float, default=0.1, help="NSA 乘子下界（默认 0.1）")
+    p.add_argument("--nsa-min", type=float, default=0.1, help="NSA 高置信度分支乘子下界（默认 0.1）")
+    p.add_argument("--nsa-conf-thresh", type=float, default=0.6,
+                   help="NSA 分段阈值：conf 高于此值缩 R，否则放大 R（默认 0.6）")
+    p.add_argument("--nsa-interval-sec", type=float, default=2.0,
+                   help="NSA 低置信度分支 R 放大倍数（默认 2.0）")
     p.add_argument("--ocm", dest="ocm_enabled", action="store_true",
                    help="启用 OCM 方向代价（默认关闭）")
     p.add_argument("--ocm-delta-t", type=int, default=3, help="OCM 观测回溯帧数（默认 3）")
@@ -516,7 +528,8 @@ def main(argv: Iterable[str] | None = None) -> int:
             min_conf=args.min_conf, out_dir=out_dir, tracker_tag=tag,
             project_root=Path(__file__).resolve().parent.parent,
             nsa_enabled=args.nsa_enabled, nsa_interval=args.nsa_interval,
-            nsa_min=args.nsa_min, ocm_enabled=args.ocm_enabled,
+            nsa_min=args.nsa_min, nsa_conf_thresh=args.nsa_conf_thresh,
+            nsa_interval_sec=args.nsa_interval_sec, ocm_enabled=args.ocm_enabled,
             ocm_delta_t=args.ocm_delta_t, ocm_weight=args.ocm_weight,
             hmiou_enabled=args.hmiou_enabled,
         )

@@ -184,6 +184,7 @@ impl RustTracker {
                         high_conf_thresh=0.5, velocity_clip=0.30, second_stage_iou_min=0.1,
                         redetect_budget=1, max_output_misses=0,
                         nsa_enabled=false, nsa_interval=1.0, nsa_min=0.1,
+                        nsa_conf_thresh=0.6, nsa_interval_sec=2.0,
                         ocm_enabled=false, ocm_delta_t=3, ocm_weight=0.2,
                         hmiou_enabled=false))]
     #[allow(clippy::too_many_arguments)]
@@ -206,6 +207,8 @@ impl RustTracker {
         nsa_enabled: bool,
         nsa_interval: f64,
         nsa_min: f64,
+        nsa_conf_thresh: f64,
+        nsa_interval_sec: f64,
         ocm_enabled: bool,
         ocm_delta_t: i32,
         ocm_weight: f64,
@@ -230,6 +233,8 @@ impl RustTracker {
             nsa_enabled,
             nsa_interval,
             nsa_min,
+            nsa_conf_thresh,
+            nsa_interval_sec,
             ocm_enabled,
             ocm_delta_t,
             ocm_weight,
@@ -322,6 +327,7 @@ impl RustTracker {
                         high_conf_thresh=None, velocity_clip=None, second_stage_iou_min=None,
                         max_output_misses=None,
                         nsa_enabled=None, nsa_interval=None, nsa_min=None,
+                        nsa_conf_thresh=None, nsa_interval_sec=None,
                         ocm_enabled=None, ocm_delta_t=None, ocm_weight=None,
                         hmiou_enabled=None))]
     #[allow(clippy::too_many_arguments)]
@@ -337,6 +343,8 @@ impl RustTracker {
         nsa_enabled: Option<bool>,
         nsa_interval: Option<f64>,
         nsa_min: Option<f64>,
+        nsa_conf_thresh: Option<f64>,
+        nsa_interval_sec: Option<f64>,
         ocm_enabled: Option<bool>,
         ocm_delta_t: Option<i32>,
         ocm_weight: Option<f64>,
@@ -353,6 +361,8 @@ impl RustTracker {
             nsa_enabled,
             nsa_interval,
             nsa_min,
+            nsa_conf_thresh,
+            nsa_interval_sec,
             ocm_enabled,
             ocm_delta_t,
             ocm_weight,
