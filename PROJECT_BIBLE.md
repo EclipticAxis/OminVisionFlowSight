@@ -908,6 +908,8 @@ MainWindow.closeEvent()
 | 2026-11-25 | MCUKF 创新域 IRLS-MCC 修复：[设计](docs/mcukf-irls-correction.md)（标准 UT 矩 + R 白化逐通道 R_eff + 真实迭代 + 同 R_eff Joseph；Python/Rust 同步，默认无量纲 σ=1.0；新增 IRLS 11 项，全套件 1554 项通过，MOT17 对照无额外退化） | ✅ 已合入 main（PR #18 → a81ce34） |
 | 2026-11-26 | 预测输出门控与轨迹生命周期解耦：[设计](docs/prediction-output-gating.md)（新增 `max_output_misses=0`，首次推理 miss 后停止输出但保留内部轨迹；Python/Rust/InferWorker/GUI 同步，新增 10 项双端门控 + 9 项 GUI + 1 项 InferWorker 测试，当前工作树全套件 1429 项通过；历史行统计提交与依赖收集环境不同，不作数量递推；MOT17 FRCNN 七序列全 stride HOTA/MOTA/IDF1 改善） | ✅ 已合入 main（PR #19 → `0e9d959`） |
 | 2026-11-26 | README 四反引号围栏修复 + Markdown 围栏配对检查固化（[设计](docs/markdown-fence-check.md)：`tools/check_markdown_fences.py` 实现 CommonMark §4.5 闭合三规则 + EOF 未闭合检测，单实现供 pytest 守护与 markdown-fences workflow 复用；修复 PR #17 引入的 4 处起始围栏；新增 17 项测试，全套件 1446 项通过） | ✅ 已合入 main（PR #20 → `1b5f199`） |
+| 2026-11-26 | 跟踪质量量化基准定型 + M0 基建与基线：[方案](docs/tracking-quality-benchmark.md) 0.2.0（MOT17/MOT20/DanceTrack 三基准角色分工；数据根 `G:\基准测试`；MOTChallenge 已停止运营，test 改为存档 leaderboard 横向参照；私有检测缓存复用；HOTA 主指标 + IDF1/IDSW + stride 1/4 矩阵；重建 `benchmark/` 四脚本 prepare/run_detection_cache/run_tracking_offline/evaluate_trackeval + 34 项测试，TrackEval NumPy 2.x shim 与 seqmap 交集修复；基线落盘：DanceTrack val HOTA 0.2045/AssA 0.084/IDSW 8470、MOT17 FRCNN HOTA 0.3961/AssA 0.377/IDSW 1131，双后端逐位一致；MOT20 可后补） | ✅ M0 主体完成（基建 + 双基线），待提交 |
+| 2026-11-27 | 跟踪增强包 NSA-KF + OCM + HMIoU：[设计](docs/tracker-nsa-ocm-hmiou.md) 0.1.0（NSA 观测噪声随置信度缩放且 NIS/AUTO 监控仍用名义 R；OCM 观测中心动量方向代价叠加 score；HMIoU 高度调制替换 IoU 项与门控；三特性默认全关 opt-in，默认路径 golden 未变；Python/Rust 同步 + release 重建，新增 21 项增强测试，全套件 1501 项通过；MOT 对照无回归：DanceTrack val HOTA 0.2045→0.2130、MOT17 FRCNN auto HOTA 0.3984→0.4298、IDSW 均下降；修复 trackeval e2e 进程内 import 副作用改子进程隔离） | ✅ 已实现待提交 |
 
 ### 11.3 已知问题
 

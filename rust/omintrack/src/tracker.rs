@@ -57,6 +57,11 @@ pub struct Track {
     pub color_hist: Option<Vec<f64>>,
     pub embedding: Option<Vec<f64>>,
     pub prev_box: BBox,
+    // OCM 观测历史（docs/tracker-nsa-ocm-hmiou.md §2.2）：
+    // observations 仅在匹配成功时写入；velocity 为观测动量方向 (vy, vx)
+    pub observations: std::collections::BTreeMap<i32, BBox>,
+    pub last_observation: Option<BBox>,
+    pub velocity: Option<(f64, f64)>,
 }
 
 impl Track {
@@ -70,8 +75,15 @@ impl Track {
         kernel_sigma: f64,
         polygon: Option<Vec<Point>>,
         velocity_clip: f64,
+        nsa_enabled: bool,
+        nsa_interval: f64,
+        nsa_min: f64,
     ) -> Track {
-        let kalman = KalmanFilter::new(kind, &box_, velocity_clip, kernel_sigma);
+        let mut kalman = KalmanFilter::new(kind, &box_, velocity_clip, kernel_sigma);
+        // NSA-KF 配置透传到滤波器（默认关闭）
+        kalman.nsa_enabled = nsa_enabled;
+        kalman.nsa_interval = nsa_interval;
+        kalman.nsa_min = nsa_min;
         let prev_polygon = polygon.clone();
         Track {
             track_id,
@@ -91,7 +103,32 @@ impl Track {
             color_hist: None,
             embedding: None,
             prev_box: box_,
+            observations: std::collections::BTreeMap::new(),
+            last_observation: Some(box_), // 以创建检测初始化（对应 Python _Track.__init__）
+            velocity: None,
         }
+    }
+
+    /// OCM 参考观测：age-delta_t → 逐帧向后回退到最近可用观测 → last_observation
+    /// （对应 Python `_Track.previous_observation`）。
+    pub fn previous_observation(&self, delta_t: i32) -> Option<BBox> {
+        for a in (self.age - delta_t)..self.age {
+            if let Some(b) = self.observations.get(&a) {
+                return Some(*b);
+            }
+        }
+        self.last_observation
+    }
+
+    /// 匹配成功时记录观测并更新 OCM 速度方向（仅保留最近 delta_t+1 个 age；
+    /// 对应 Python `_Track.record_observation`）。
+    pub fn record_observation(&mut self, box_: &BBox, delta_t: i32) {
+        let prev = self.previous_observation(delta_t);
+        self.velocity = prev.and_then(|p| speed_direction(&p, box_));
+        self.observations.insert(self.age, *box_);
+        let min_age = self.age - delta_t;
+        self.observations.retain(|&a, _| a >= min_age);
+        self.last_observation = Some(*box_);
     }
 
     pub fn to_snapshot(&self) -> TrackSnapshot {
@@ -114,6 +151,10 @@ impl Track {
         new_kf.p = self.kalman.p;
         new_kf.q = self.kalman.q;
         new_kf.r = self.kalman.r;
+        // NSA-KF 配置随滤波器热切换保留
+        new_kf.nsa_enabled = self.kalman.nsa_enabled;
+        new_kf.nsa_interval = self.kalman.nsa_interval;
+        new_kf.nsa_min = self.kalman.nsa_min;
         self.kalman = new_kf;
     }
 
@@ -269,6 +310,14 @@ pub struct TrackerParams {
     pub second_stage_iou_min: f64,
     pub redetect_budget: i32,
     pub max_output_misses: i32,
+    // 跟踪增强（docs/tracker-nsa-ocm-hmiou.md，默认全部关闭 opt-in）
+    pub nsa_enabled: bool,
+    pub nsa_interval: f64,
+    pub nsa_min: f64,
+    pub ocm_enabled: bool,
+    pub ocm_delta_t: i32,
+    pub ocm_weight: f64,
+    pub hmiou_enabled: bool,
 }
 
 impl Default for TrackerParams {
@@ -289,6 +338,13 @@ impl Default for TrackerParams {
             second_stage_iou_min: 0.1,
             redetect_budget: 1,
             max_output_misses: 0, // 输出门控：misses 超过此值的 track 不输出（内部生命周期不受影响）
+            nsa_enabled: false,
+            nsa_interval: 1.0,
+            nsa_min: 0.1,
+            ocm_enabled: false,
+            ocm_delta_t: 3,
+            ocm_weight: 0.2,
+            hmiou_enabled: false,
         }
     }
 }
@@ -312,6 +368,14 @@ pub struct TrackerCore {
     pub velocity_clip: f64,
     pub second_stage_iou_min: f64,
     pub adaptor: Option<FilterAdaptor>,
+    // 跟踪增强配置（默认全关 ⇒ 默认路径行为逐位不变）
+    pub nsa_enabled: bool,
+    pub nsa_interval: f64,
+    pub nsa_min: f64,
+    pub ocm_enabled: bool,
+    pub ocm_delta_t: i32,
+    pub ocm_weight: f64,
+    pub hmiou_enabled: bool,
 }
 
 impl TrackerCore {
@@ -340,6 +404,13 @@ impl TrackerCore {
             velocity_clip: p.velocity_clip,
             second_stage_iou_min: p.second_stage_iou_min,
             adaptor,
+            nsa_enabled: p.nsa_enabled,
+            nsa_interval: p.nsa_interval,
+            nsa_min: p.nsa_min,
+            ocm_enabled: p.ocm_enabled,
+            ocm_delta_t: p.ocm_delta_t.max(1),
+            ocm_weight: p.ocm_weight,
+            hmiou_enabled: p.hmiou_enabled,
         }
     }
 
@@ -419,6 +490,13 @@ impl TrackerCore {
         velocity_clip: Option<f64>,
         second_stage_iou_min: Option<f64>,
         max_output_misses: Option<i32>,
+        nsa_enabled: Option<bool>,
+        nsa_interval: Option<f64>,
+        nsa_min: Option<f64>,
+        ocm_enabled: Option<bool>,
+        ocm_delta_t: Option<i32>,
+        ocm_weight: Option<f64>,
+        hmiou_enabled: Option<bool>,
     ) {
         if let Some(v) = iou_threshold {
             self.iou_threshold = v;
@@ -443,6 +521,35 @@ impl TrackerCore {
         }
         if let Some(v) = max_output_misses {
             self.max_output_misses = v.max(0);
+        }
+        // 跟踪增强参数（NSA 需同步到已有 track 的滤波器）
+        if let Some(v) = nsa_enabled {
+            self.nsa_enabled = v;
+        }
+        if let Some(v) = nsa_interval {
+            self.nsa_interval = v;
+        }
+        if let Some(v) = nsa_min {
+            self.nsa_min = v;
+        }
+        if nsa_enabled.is_some() || nsa_interval.is_some() || nsa_min.is_some() {
+            for trk in self.tracks.values_mut() {
+                trk.kalman.nsa_enabled = self.nsa_enabled;
+                trk.kalman.nsa_interval = self.nsa_interval;
+                trk.kalman.nsa_min = self.nsa_min;
+            }
+        }
+        if let Some(v) = ocm_enabled {
+            self.ocm_enabled = v;
+        }
+        if let Some(v) = ocm_delta_t {
+            self.ocm_delta_t = v.max(1);
+        }
+        if let Some(v) = ocm_weight {
+            self.ocm_weight = v;
+        }
+        if let Some(v) = hmiou_enabled {
+            self.hmiou_enabled = v;
         }
     }
 
@@ -563,6 +670,9 @@ impl TrackerCore {
                     self.mcukf_kernel_sigma,
                     det.polygon.clone(),
                     self.velocity_clip,
+                    self.nsa_enabled,
+                    self.nsa_interval,
+                    self.nsa_min,
                 );
                 if let Some(Some(h)) = det_hist.get(i) {
                     trk.color_hist = Some(h.clone());
@@ -670,8 +780,9 @@ impl TrackerCore {
                 matched_dis.insert(di);
                 let new_box = det.box_;
                 let det_clone = det.clone();
+                let ocm_dt = if self.ocm_enabled { Some(self.ocm_delta_t) } else { None };
                 let trk = self.tracks.get_mut(&tid).unwrap();
-                update_track(trk, &det_clone, &new_box, alpha, &mut self.adaptor)?;
+                update_track(trk, &det_clone, &new_box, alpha, &mut self.adaptor, ocm_dt)?;
             }
         }
         Ok((matched_tids, matched_dis, BTreeSet::new()))
@@ -703,6 +814,10 @@ impl TrackerCore {
         let track_labels: BTreeSet<String> =
             self.tracks.values().map(|t| t.label.clone()).collect();
         let alpha = self.smooth_alpha;
+        let hmiou_enabled = self.hmiou_enabled;
+        let ocm_enabled = self.ocm_enabled;
+        let ocm_delta_t = self.ocm_delta_t;
+        let ocm_weight = self.ocm_weight;
 
         for label in labels {
             if !track_labels.contains(label) {
@@ -736,8 +851,17 @@ impl TrackerCore {
                 let (det_cx, det_cy) = shape_center(&det.box_, det.polygon.as_ref());
                 for (ti_idx, &tid) in track_items.iter().enumerate() {
                     let trk = &self.tracks[&tid];
-                    let iou =
+                    let mut iou =
                         shape_iou(&trk.box_, trk.polygon.as_ref(), &det.box_, det.polygon.as_ref());
+                    // HMIoU：IoU 项与门控统一以 hmiou 替换 2D IoU（§2.3）；
+                    // OBB polygon 对不适用（保持 2D polygon IoU）
+                    let polygon_pair = matches!(
+                        (&trk.polygon, &det.polygon),
+                        (Some(tp), Some(dp)) if tp.len() == 4 && dp.len() == 4
+                    );
+                    if hmiou_enabled && !polygon_pair {
+                        iou *= height_iou(&trk.box_, &det.box_);
+                    }
                     let (trk_cx, trk_cy) = shape_center(&trk.box_, trk.polygon.as_ref());
                     let dist = ((trk_cx - det_cx).powi(2) + (trk_cy - det_cy).powi(2)).sqrt();
                     let avg_size = ((trk.box_[2] - trk.box_[0])
@@ -750,7 +874,7 @@ impl TrackerCore {
                     if accept {
                         let center_proximity = 1.0 - (dist / avg_size.max(1e-3)).min(1.0);
                         let det_emb_i = det_emb.get(di).and_then(|e| e.as_deref());
-                        let score = if reid_active && det_emb_i.is_some() && trk.embedding.is_some() {
+                        let mut score = if reid_active && det_emb_i.is_some() && trk.embedding.is_some() {
                             let reid_sim =
                                 cosine_similarity(trk.embedding.as_ref().unwrap(), det_emb_i.unwrap())
                                     .max(0.0);
@@ -760,6 +884,22 @@ impl TrackerCore {
                                 trk.appearance_similarity(det_hist.get(di).and_then(|h| h.as_deref()));
                             0.85 * iou + 0.10 * center_proximity + appearance_weight * appearance_sim
                         };
+                        // OCM：观测中心动量方向代价叠加到 score（§2.2；ReID 分支同样叠加）
+                        if ocm_enabled {
+                            if let Some(vel) = trk.velocity {
+                                if let Some(prev_obs) = trk.previous_observation(ocm_delta_t) {
+                                    if let Some(dir) = speed_direction(&prev_obs, &det.box_) {
+                                        let cos_sim =
+                                            (vel.0 * dir.0 + vel.1 * dir.1).clamp(-1.0, 1.0);
+                                        let theta = cos_sim.acos();
+                                        let angle_term = (std::f64::consts::PI * 0.5
+                                            - theta.abs())
+                                            / std::f64::consts::PI;
+                                        score += angle_term * ocm_weight * det.confidence;
+                                    }
+                                }
+                            }
+                        }
                         cost[di_idx][ti_idx] = 1.0 - score;
                     }
                 }
@@ -776,8 +916,9 @@ impl TrackerCore {
                     let det_clone = dets[di].clone();
                     let update_emb =
                         reid_active && det_emb.get(di).and_then(|e| e.as_ref()).is_some();
+                    let ocm_dt = if self.ocm_enabled { Some(self.ocm_delta_t) } else { None };
                     let trk = self.tracks.get_mut(&tid).unwrap();
-                    update_track(trk, &det_clone, &new_box, alpha, &mut self.adaptor)?;
+                    update_track(trk, &det_clone, &new_box, alpha, &mut self.adaptor, ocm_dt)?;
                     if update_emb {
                         let emb = det_emb[di].as_ref().unwrap().clone();
                         let trk = self.tracks.get_mut(&tid).unwrap();
@@ -883,8 +1024,9 @@ impl TrackerCore {
                     let iou_with_pred = box_iou(&trk_box, &refined_box);
                     if iou_with_pred >= self.redetect_iou_threshold {
                         let alpha = self.smooth_alpha;
+                        let ocm_dt = if self.ocm_enabled { Some(self.ocm_delta_t) } else { None };
                         let trk = self.tracks.get_mut(&tid).unwrap();
-                        update_track(trk, &refined, &refined_box, alpha, &mut self.adaptor)?;
+                        update_track(trk, &refined, &refined_box, alpha, &mut self.adaptor, ocm_dt)?;
                         trk.track_state = "redetected".to_string();
                         trk.predicted_only = false;
                         trk.redetect_attempts = 0;
@@ -913,6 +1055,18 @@ impl TrackerCore {
     }
 }
 
+/// 观测中心动量方向 (Δcy, Δcx)/norm（对应 Python `_speed_direction`；
+/// 零位移返回 None，保护性处理双端一致）。
+pub fn speed_direction(prev_box: &BBox, cur_box: &BBox) -> Option<(f64, f64)> {
+    let dy = (cur_box[1] + cur_box[3]) * 0.5 - (prev_box[1] + prev_box[3]) * 0.5;
+    let dx = (cur_box[0] + cur_box[2]) * 0.5 - (prev_box[0] + prev_box[2]) * 0.5;
+    let norm = (dy * dy + dx * dx).sqrt();
+    if norm < 1e-12 {
+        return None;
+    }
+    Some((dy / norm, dx / norm))
+}
+
 /// 匹配成功后的 track 更新（对应 `_update_track`；tracker 级参数
 /// smooth_alpha / adaptor 由调用方传入以解决借用冲突）。
 fn update_track(
@@ -921,9 +1075,10 @@ fn update_track(
     new_box: &BBox,
     alpha: f64,
     adaptor: &mut Option<FilterAdaptor>,
+    ocm_delta_t: Option<i32>,
 ) -> Result<(), String> {
-    // 卡尔曼校正
-    let corrected_box = trk.kalman.correct(new_box)?;
+    // 卡尔曼校正（conf 供 NSA-KF 缩放观测噪声）
+    let corrected_box = trk.kalman.correct(new_box, det.confidence)?;
 
     // AUTO 模式：记录 NIS 和 Cholesky 失败
     if let Some(a) = adaptor {
@@ -933,6 +1088,11 @@ fn update_track(
             a.record_cholesky_fail();
             trk.kalman.cholesky_failed = false;
         }
+    }
+
+    // OCM：仅匹配成功时记录观测并更新速度方向（§2.2）
+    if let Some(dt) = ocm_delta_t {
+        trk.record_observation(new_box, dt);
     }
 
     // EMA 平滑 box（用 corrected_box 而非裸 det box）

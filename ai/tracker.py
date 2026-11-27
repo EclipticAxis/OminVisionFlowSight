@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import logging
+import math
 
 import numpy as np
 import cv2
@@ -39,6 +40,30 @@ def _box_iou(a: np.ndarray, b: np.ndarray) -> float:
     area_b = (b[2] - b[0]) * (b[3] - b[1])
     union = area_a + area_b - inter
     return inter / union if union > 1e-8 else 0.0
+
+
+def _height_iou(a: np.ndarray, b: np.ndarray) -> float:
+    """高度 1 维 IoU（HMIoU 调制项，docs/tracker-nsa-ocm-hmiou.md §2.3）。
+
+    h_iou = max(0, min(y2a,y2b) - max(y1a,y1b)) / (max(y2a,y2b) - min(y1a,y1b))
+    保护性偏离：交集长度 max(0,·) 防负（原文未 clip）。
+    """
+    inter = max(0.0, min(float(a[3]), float(b[3])) - max(float(a[1]), float(b[1])))
+    span = max(float(a[3]), float(b[3])) - min(float(a[1]), float(b[1]))
+    return inter / span if span > 1e-8 else 0.0
+
+
+def _speed_direction(prev_box: np.ndarray, cur_box: np.ndarray) -> tuple[float, float] | None:
+    """观测中心动量方向 (Δcy, Δcx)/norm（OC-SORT speed_direction，§2.2）。
+
+    零位移（norm≈0）返回 None（保护性处理，双端一致）。
+    """
+    dy = (float(cur_box[1]) + float(cur_box[3])) * 0.5 - (float(prev_box[1]) + float(prev_box[3])) * 0.5
+    dx = (float(cur_box[0]) + float(cur_box[2])) * 0.5 - (float(prev_box[0]) + float(prev_box[2])) * 0.5
+    norm = (dy * dy + dx * dx) ** 0.5
+    if norm < 1e-12:
+        return None
+    return (dy / norm, dx / norm)
 
 
 def _shape_iou(
@@ -138,6 +163,10 @@ class _DetectionUKF:
         self.last_s_trace = 1.0                      # trace(S)
         self.cholesky_failed = False                 # Cholesky 分解失败标志
         self._miss_streak = 0                        # 连续 miss 次数，用于自适应 Q
+        # NSA-KF 观测噪声自适应（docs/tracker-nsa-ocm-hmiou.md §2.1，默认关闭 opt-in）
+        self.nsa_enabled = False
+        self.nsa_interval = 1.0
+        self.nsa_min = 0.1
 
     def _make_r(self, w: float, h: float) -> np.ndarray:
         """按目标尺度构造观测噪声 R：小目标位置噪声更大。"""
@@ -150,6 +179,15 @@ class _DetectionUKF:
             base_size_var,
             base_size_var,
         ], dtype=np.float64))
+
+    def _nsa_multiplier(self, conf: float) -> float:
+        """NSA-KF 乘子：clip((1 - conf)·nsa_interval, nsa_min, 1.0)；关闭时恒 1.0。
+
+        nsa_min 截断为保护性改动（防 conf→1 时 R 退化），非原文行为（§2.1）。
+        """
+        if not self.nsa_enabled:
+            return 1.0
+        return float(np.clip((1.0 - float(conf)) * self.nsa_interval, self.nsa_min, 1.0))
 
     def _adapt_q(self, nis: float) -> None:
         """根据 NIS 自适应调整过程噪声 Q。"""
@@ -237,7 +275,7 @@ class _DetectionUKF:
         self._clip_p_variance()
         return self.to_box()
 
-    def correct(self, box: np.ndarray) -> np.ndarray:
+    def correct(self, box: np.ndarray, conf: float = 0.5) -> np.ndarray:
         """UKF 更新：sigma 点通过观测模型 + 无迹变换计算卡尔曼增益。
 
         观测模型 h(x) = H·x（直接取前 4 维 [cx, cy, w, h]）
@@ -263,6 +301,10 @@ class _DetectionUKF:
         nis = self.last_innovation_sq / max(self.last_s_trace, 1e-10)
         # 自适应 Q
         self._adapt_q(nis)
+        # NSA-KF：仅影响 K 与状态/协方差更新的有效 S（NIS/AUTO 监控已用未缩放 R，§2.1）
+        nsa_mult = self._nsa_multiplier(conf)
+        if nsa_mult != 1.0:
+            S = S + (nsa_mult - 1.0) * np.diag(np.diag(self.r))  # R 为对角
         # 状态-观测交叉协方差 Pxz
         dx = sigmas - self.x                           # (8, 17)
         Pxz = (dx * self._wc) @ dz.T                   # (8, 4)
@@ -311,7 +353,7 @@ class _DetectionMCUKF(_DetectionUKF):
         self._kernel_sigma = float(max(0.01, kernel_sigma))
         self._max_iter = int(max(1, max_iter))
 
-    def correct(self, box: np.ndarray) -> np.ndarray:
+    def correct(self, box: np.ndarray, conf: float = 0.5) -> np.ndarray:
         """MCUKF 更新：创新域 IRLS-MCC 不动点迭代 + Joseph 形式协方差。"""
         cx, cy, w, h = _box_to_cxcywh(box)
         z = np.array([[cx], [cy], [w], [h]], dtype=np.float64)
@@ -319,6 +361,10 @@ class _DetectionMCUKF(_DetectionUKF):
         # 名义观测噪声 R（self.r 始终保持名义值）
         self.r = self._make_r(w, h)
         r0 = self.r
+        # NSA-KF：先得到 NSA 缩放的名义 R，IRLS 白化在其基础上进行（叠加顺序 §2.1）；
+        # NIS 统计仍用未缩放的 r0（S0 = Pzz + r0）
+        nsa_mult = self._nsa_multiplier(conf)
+        r_nsa = r0 * nsa_mult if nsa_mult != 1.0 else r0
 
         sigmas = self._sigma_points()
         H = np.zeros((4, 8), dtype=np.float64)
@@ -344,7 +390,7 @@ class _DetectionMCUKF(_DetectionUKF):
         p_pred = self.p.copy()                         # 保存预测协方差
 
         sigma_sq = self._kernel_sigma ** 2
-        r_diag = np.diag(r0)                           # 名义 R 的对角元
+        r_diag = np.diag(r_nsa)                        # NSA 缩放后名义 R 的对角元
 
         # 创新域 IRLS-MCC 不动点迭代（max_iter >= 1，K/R_eff 始终有定义）
         x_iter = x_pred
@@ -356,7 +402,7 @@ class _DetectionMCUKF(_DetectionUKF):
             residual = z - (z_pred + H @ (x_iter - x_pred))     # (4, 1)
             y = residual.flatten() / np.sqrt(np.maximum(r_diag, 1e-12))
             c = np.clip(np.exp(-y ** 2 / (2.0 * sigma_sq)), 1e-4, 1.0)
-            R_eff = r0 @ np.diag(1.0 / c)                        # (4, 4)
+            R_eff = r_nsa @ np.diag(1.0 / c)                     # (4, 4)
             K = Pxz @ np.linalg.inv(Pzz + R_eff)                 # (8, 4)
             x_new = x_pred + K @ (z - z_pred)                    # (8, 1)
             if np.linalg.norm(x_new - x_iter) < 1e-6:
@@ -426,7 +472,7 @@ class _DetectionManifoldUKF(_DetectionUKF):
         self._project_spd()
         return self.to_box()
 
-    def correct(self, box: np.ndarray) -> np.ndarray:
+    def correct(self, box: np.ndarray, conf: float = 0.5) -> np.ndarray:
         """与 UKF 相同的更新，但用 SPD 投影替代简单对称化。"""
         cx, cy, w, h = _box_to_cxcywh(box)
         z = np.array([[cx], [cy], [w], [h]], dtype=np.float64)
@@ -436,12 +482,15 @@ class _DetectionManifoldUKF(_DetectionUKF):
         z_pred = (self._wm * z_sigmas).sum(axis=1, keepdims=True)
         dz = z_sigmas - z_pred
         S = (dz * self._wc) @ dz.T + self.r
+        # NSA-KF：K 与协方差更新用缩放后的有效 S；末尾 NIS 统计仍用未缩放 S（§2.1）
+        nsa_mult = self._nsa_multiplier(conf)
+        S_gain = S if nsa_mult == 1.0 else S + (nsa_mult - 1.0) * np.diag(np.diag(self.r))
         dx = sigmas - self.x
         Pxz = (dx * self._wc) @ dz.T
-        K = Pxz @ np.linalg.inv(S)
+        K = Pxz @ np.linalg.inv(S_gain)
         self.x = self.x + K @ (z - z_pred)
         self._clip_state()
-        self.p = self.p - K @ S @ K.T
+        self.p = self.p - K @ S_gain @ K.T
         self._project_spd()
         # 记录创新息统计
         innovation = z - z_pred
@@ -556,12 +605,14 @@ class _Track:
         "kalman", "predicted_only", "track_state", "redetect_attempts",
         "color_hist", "prev_box", "_color_ema",
         "embedding", "_embedding_ema",
+        "observations", "last_observation", "velocity",
     )
 
     def __init__(self, track_id: int, label: str, box: np.ndarray, confidence: float, keypoints: list[dict],
                  filter_type: str = "ukf", mcukf_kernel_sigma: float = 1.0,
                  polygon: list[tuple[float, float]] | None = None,
-                 velocity_clip: float = 0.30):
+                 velocity_clip: float = 0.30,
+                 nsa_enabled: bool = False, nsa_interval: float = 1.0, nsa_min: float = 0.1):
         self.track_id = track_id
         self.label = label
         self.box = box.astype(np.float64)                     # [x1, y1, x2, y2]
@@ -578,6 +629,15 @@ class _Track:
             self.kalman = _DetectionManifoldUKF(box, velocity_clip=velocity_clip)
         else:
             self.kalman = _DetectionUKF(box, velocity_clip=velocity_clip)
+        # NSA-KF 配置透传到滤波器（默认关闭）
+        self.kalman.nsa_enabled = bool(nsa_enabled)
+        self.kalman.nsa_interval = float(nsa_interval)
+        self.kalman.nsa_min = float(nsa_min)
+        # OCM 观测历史（§2.2）：observations 仅在匹配成功时写入
+        # （由 DetectionTracker._update_track 驱动）；last_observation 以创建检测初始化
+        self.observations: dict[int, np.ndarray] = {}
+        self.last_observation: np.ndarray | None = self.box.copy()
+        self.velocity: tuple[float, float] | None = None     # 观测动量方向 (vy, vx)
         self.predicted_only = False                          # 是否为纯预测帧
         self.track_state = "normal"                          # normal / predicted / redetected
         self.redetect_attempts = 0                           # 已重检测尝试次数
@@ -587,6 +647,25 @@ class _Track:
         self._embedding_ema = 0.8                            # embedding EMA 系数
         self.prev_box = self.box.copy()                      # 上一帧 box，用于关键点平移
         self.prev_polygon = [(float(x), float(y)) for x, y in polygon] if polygon else None  # 上一帧 polygon
+
+    def previous_observation(self, delta_t: int) -> np.ndarray | None:
+        """OCM 参考观测：age-delta_t → 逐帧向后回退到最近可用观测 → last_observation。"""
+        for a in range(self.age - int(delta_t), self.age):
+            if a in self.observations:
+                return self.observations[a]
+        return self.last_observation
+
+    def record_observation(self, box: np.ndarray, delta_t: int) -> None:
+        """匹配成功时记录观测并更新 OCM 速度方向（仅保留最近 delta_t+1 个 age）。
+
+        纯 predict/miss 帧不写入（由调用方保证只在 correct 后调用）。
+        """
+        prev = self.previous_observation(delta_t)
+        self.velocity = _speed_direction(prev, box) if prev is not None else None
+        self.observations[self.age] = box.astype(np.float64).copy()
+        min_age = self.age - int(delta_t)
+        self.observations = {a: b for a, b in self.observations.items() if a >= min_age}
+        self.last_observation = box.astype(np.float64).copy()
 
     def to_dict(self) -> dict:
         d = {
@@ -623,6 +702,10 @@ class _Track:
         new.p = old.p.copy()
         new.q = old.q.copy()
         new.r = old.r.copy()
+        # NSA-KF 配置随滤波器热切换保留
+        new.nsa_enabled = old.nsa_enabled
+        new.nsa_interval = old.nsa_interval
+        new.nsa_min = old.nsa_min
         self.kalman = new
 
     def predict_polygon(self, old_box: np.ndarray, new_box: np.ndarray) -> None:
@@ -768,12 +851,28 @@ class DetectionTracker:
         reid_stride: int = 3,
         backend: str | None = None,  # 由 __new__ 消费，python 后端忽略
         max_output_misses: int = 0,  # 输出门控：misses 超过此值的 track 不输出（内部生命周期不受影响）
+        # === 跟踪增强（docs/tracker-nsa-ocm-hmiou.md，默认全部关闭 opt-in）===
+        nsa_enabled: bool = False,   # NSA-KF：观测噪声随检测置信度缩放
+        nsa_interval: float = 1.0,   # NSA 缩放区间
+        nsa_min: float = 0.1,        # NSA 乘子下界（保护性截断）
+        ocm_enabled: bool = False,   # OCM：观测中心动量方向代价
+        ocm_delta_t: int = 3,        # OCM 观测回溯帧数
+        ocm_weight: float = 0.2,     # OCM 代价权重（对应 vdc_weight）
+        hmiou_enabled: bool = False, # HMIoU：高度 1 维 IoU 调制 2D IoU
     ):
         self._iou_threshold = iou_threshold
         self._max_misses = max_misses
         # 默认 0：第一次推理 miss 后停止输出；misses=0 的跳帧预测仍输出。
         # 内部生命周期仍由 max_misses 控制；两参数相等即恢复旧可见性语义。
         self._max_output_misses = max(0, int(max_output_misses))
+        # 跟踪增强配置（默认全关 ⇒ 默认路径行为逐位不变）
+        self._nsa_enabled = bool(nsa_enabled)
+        self._nsa_interval = float(nsa_interval)
+        self._nsa_min = float(nsa_min)
+        self._ocm_enabled = bool(ocm_enabled)
+        self._ocm_delta_t = max(1, int(ocm_delta_t))
+        self._ocm_weight = float(ocm_weight)
+        self._hmiou_enabled = bool(hmiou_enabled)
         self._smooth_alpha = smooth_alpha
         self._min_hits = min_hits_to_show
         self._next_id = 1
@@ -853,6 +952,13 @@ class DetectionTracker:
         velocity_clip: float | None = None,
         second_stage_iou_min: float | None = None,
         max_output_misses: int | None = None,
+        nsa_enabled: bool | None = None,
+        nsa_interval: float | None = None,
+        nsa_min: float | None = None,
+        ocm_enabled: bool | None = None,
+        ocm_delta_t: int | None = None,
+        ocm_weight: float | None = None,
+        hmiou_enabled: bool | None = None,
     ) -> None:
         """批量更新跟踪器参数，运行时生效。
 
@@ -875,6 +981,26 @@ class DetectionTracker:
             self._second_stage_iou_min = float(second_stage_iou_min)
         if max_output_misses is not None:
             self._max_output_misses = max(0, int(max_output_misses))
+        # 跟踪增强参数（NSA 需同步到已有 track 的滤波器）
+        if nsa_enabled is not None:
+            self._nsa_enabled = bool(nsa_enabled)
+        if nsa_interval is not None:
+            self._nsa_interval = float(nsa_interval)
+        if nsa_min is not None:
+            self._nsa_min = float(nsa_min)
+        if nsa_enabled is not None or nsa_interval is not None or nsa_min is not None:
+            for trk in self._tracks.values():
+                trk.kalman.nsa_enabled = self._nsa_enabled
+                trk.kalman.nsa_interval = self._nsa_interval
+                trk.kalman.nsa_min = self._nsa_min
+        if ocm_enabled is not None:
+            self._ocm_enabled = bool(ocm_enabled)
+        if ocm_delta_t is not None:
+            self._ocm_delta_t = max(1, int(ocm_delta_t))
+        if ocm_weight is not None:
+            self._ocm_weight = float(ocm_weight)
+        if hmiou_enabled is not None:
+            self._hmiou_enabled = bool(hmiou_enabled)
 
     def update_appearance(self, frame: np.ndarray) -> None:
         """为所有活跃 track 更新外观颜色直方图。"""
@@ -986,7 +1112,10 @@ class DetectionTracker:
                              filter_type=self._get_effective_filter_type(),
                              mcukf_kernel_sigma=self._mcukf_kernel_sigma,
                              polygon=polygon,
-                             velocity_clip=self._velocity_clip)
+                             velocity_clip=self._velocity_clip,
+                             nsa_enabled=self._nsa_enabled,
+                             nsa_interval=self._nsa_interval,
+                             nsa_min=self._nsa_min)
                 # 初始化外观直方图
                 if det_hist[i] is not None:
                     trk.color_hist = det_hist[i]
@@ -1161,6 +1290,13 @@ class DetectionTracker:
 
                 for ti_idx, (tid, trk) in enumerate(track_items):
                     iou = _shape_iou(trk.box, trk.polygon, det_box, det_polygon)
+                    # HMIoU：IoU 项与门控统一以 hmiou 替换 2D IoU（§2.3）；
+                    # OBB polygon 对不适用（保持 2D polygon IoU）
+                    if self._hmiou_enabled and not (
+                        trk.polygon is not None and det_polygon is not None
+                        and len(trk.polygon) == 4 and len(det_polygon) == 4
+                    ):
+                        iou = iou * _height_iou(trk.box, det_box)
                     trk_cx, trk_cy = _shape_center(trk.box, trk.polygon)
                     dist = ((trk_cx - det_cx) ** 2 + (trk_cy - det_cy) ** 2) ** 0.5
                     avg_size = (
@@ -1179,6 +1315,17 @@ class DetectionTracker:
                         else:
                             appearance_sim = trk.appearance_similarity(det_hist[di])
                             score = 0.85 * iou + 0.10 * center_proximity + appearance_weight * appearance_sim
+                        # OCM：观测中心动量方向代价叠加到 score（§2.2；ReID 分支同样叠加）
+                        if self._ocm_enabled and trk.velocity is not None:
+                            prev_obs = trk.previous_observation(self._ocm_delta_t)
+                            if prev_obs is not None:
+                                direction = _speed_direction(prev_obs, det_box)
+                                if direction is not None:
+                                    cos_sim = max(-1.0, min(1.0,
+                                        trk.velocity[0] * direction[0] + trk.velocity[1] * direction[1]))
+                                    theta = math.acos(cos_sim)
+                                    angle_term = (math.pi * 0.5 - abs(theta)) / math.pi
+                                    score += angle_term * self._ocm_weight * det_conf[di]
                         cost[di_idx, ti_idx] = 1.0 - score
 
             row_ind, col_ind = linear_sum_assignment(cost)
@@ -1369,8 +1516,8 @@ class DetectionTracker:
         trk = self._tracks[tid]
         alpha = self._smooth_alpha
 
-        # 卡尔曼校正：让速度估计吸收本次观测
-        corrected_box = trk.kalman.correct(new_box)
+        # 卡尔曼校正：让速度估计吸收本次观测（conf 供 NSA-KF 缩放观测噪声）
+        corrected_box = trk.kalman.correct(new_box, det["confidence"])
 
         # AUTO 模式：记录 NIS 和 Cholesky 失败
         if self._adaptor is not None:
@@ -1379,6 +1526,10 @@ class DetectionTracker:
             if getattr(trk.kalman, 'cholesky_failed', False):
                 self._adaptor.record_cholesky_fail()
                 trk.kalman.cholesky_failed = False
+
+        # OCM：仅匹配成功时记录观测并更新速度方向（§2.2）
+        if self._ocm_enabled:
+            trk.record_observation(new_box, self._ocm_delta_t)
 
         # EMA 平滑 box（用 corrected_box 而非裸 det box，类似 RectangleTracker）
         trk.box = alpha * corrected_box + (1.0 - alpha) * trk.box
