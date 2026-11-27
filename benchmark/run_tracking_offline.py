@@ -312,7 +312,19 @@ def git_revision(cwd: Path) -> str:
             ["git", "rev-parse", "HEAD"], cwd=cwd,
             capture_output=True, text=True, timeout=10,
         )
-        return out.stdout.strip() if out.returncode == 0 else "unknown"
+        if out.returncode != 0:
+            return "unknown"
+        sha = out.stdout.strip()
+        # 脏指纹：跟踪/评测代码有未提交改动时标记 -dirty（排除 results/模型/数据产物），
+        # 使 summary.json 记录的 revision 能真实复现产出代码。
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain", "--",
+             "ai", "rust", "benchmark", ":(exclude)benchmark/results"],
+            cwd=cwd, capture_output=True, text=True, timeout=10,
+        )
+        if dirty.returncode == 0 and dirty.stdout.strip():
+            return sha + "-dirty"
+        return sha
     except (OSError, subprocess.SubprocessError):
         return "unknown"
 

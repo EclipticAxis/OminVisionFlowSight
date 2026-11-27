@@ -247,7 +247,20 @@ def git_revision(cwd: Path) -> str:
             ["git", "rev-parse", "HEAD"], cwd=cwd,
             capture_output=True, text=True, timeout=10,
         )
-        return out.stdout.strip() if out.returncode == 0 else "unknown"
+        if out.returncode != 0:
+            return "unknown"
+        sha = out.stdout.strip()
+        # 工作区脏指纹：仅当**跟踪/评测代码**有未提交改动时标记 -dirty
+        # （排除 results/ 报告、模型、数据等产物，避免入库动作本身误标）。
+        # 目的：让报告/结果指向的 SHA 能真实复现产出代码——未提交改动必须显式可见。
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain", "--",
+             "ai", "rust", "benchmark", ":(exclude)benchmark/results"],
+            cwd=cwd, capture_output=True, text=True, timeout=10,
+        )
+        if dirty.returncode == 0 and dirty.stdout.strip():
+            return sha + "-dirty"
+        return sha
     except (OSError, subprocess.SubprocessError):
         return "unknown"
 
@@ -450,11 +463,22 @@ def main(argv: Iterable[str] | None = None) -> int:
     # 元信息：以第一个 tracker 的 summary.json 为基础，命令行覆盖优先
     base_summary = load_tracker_summary(trackers_dir, tags[0])
     repo_root = Path(__file__).resolve().parent.parent
-    # 每个 tracker 自身 summary 的 revision（溯源各 run 的产出代码）
-    tracker_revisions = {t: load_tracker_summary(trackers_dir, t).get("revision") for t in tags}
+    # 逐 tracker 读取 summary（revision / iou_threshold 各自溯源）
+    summaries = {t: load_tracker_summary(trackers_dir, t) for t in tags}
+    tracker_revisions = {t: s.get("revision") for t, s in summaries.items()}
+    iou_by_tracker = {t: s.get("iou_threshold") for t, s in summaries.items()}
+    distinct_iou = sorted({v for v in iou_by_tracker.values() if v is not None})
+    if len(distinct_iou) > 1:
+        # 多 tracker 阈值不一致：告警 + 记 per-tracker 集合，主字段置 None 不掩盖差异
+        print(f"警告: 各 tracker iou_threshold 不一致: {distinct_iou}；"
+              f"详见 meta.iou_threshold_by_tracker", file=sys.stderr)
+    iou_threshold = distinct_iou[0] if len(distinct_iou) == 1 else None
     date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
     meta = {
         "tag": args.tag,
+        # 报告格式版本：v2 起 revision=评测执行时 HEAD（旧 v1 为产出 tracker 结果代码）、
+        # 新增 tracker_revisions/iou_threshold/evaluated_sequences/report_schema_version。
+        "report_schema_version": 2,
         "date": datetime.now(timezone.utc).isoformat(),
         "dataset": args.dataset,
         "split": args.split,
@@ -469,7 +493,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         # （否则混合基线+实验对照时，revision 会错记成基线跑批时的旧 SHA）。
         "revision": git_revision(repo_root),
         "tracker_revisions": tracker_revisions,
-        "iou_threshold": base_summary.get("iou_threshold"),
+        "iou_threshold": iou_threshold,
+        "iou_threshold_by_tracker": iou_by_tracker,
         "trackeval_version": trackeval_version(),
         "evaluated_sequences": sorted(expected),
         "seqmap_rewritten": seqmap_rewritten,
