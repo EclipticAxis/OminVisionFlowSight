@@ -1,10 +1,10 @@
 # MOT 评测报告 — enhance_v2_mot17_frcnn
 
-- 日期: 2026-11-27T10:53:49.353973+00:00
+- 日期: 2026-11-27T11:17:28.176436+00:00
 - 数据集/split: mot17 / train
 - 检测协议: public-frcnn
 - stride: 1  滤波器: ukf  后端: rust
-- 代码 revision: 3278848024614fa5e5fec915220df6b96e3c0dbb
+- 代码 revision: 814c8f4994188ded123b189c1fa9316d37018b0b
 - TrackEval: 1.0.dev1  GT: G:\基准测试\MOTChallenge\MOT17\train
 
 ## 总表（多序列合并）

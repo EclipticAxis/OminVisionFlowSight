@@ -449,6 +449,9 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     # 元信息：以第一个 tracker 的 summary.json 为基础，命令行覆盖优先
     base_summary = load_tracker_summary(trackers_dir, tags[0])
+    repo_root = Path(__file__).resolve().parent.parent
+    # 每个 tracker 自身 summary 的 revision（溯源各 run 的产出代码）
+    tracker_revisions = {t: load_tracker_summary(trackers_dir, t).get("revision") for t in tags}
     date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
     meta = {
         "tag": args.tag,
@@ -462,8 +465,11 @@ def main(argv: Iterable[str] | None = None) -> int:
         "stride": args.stride if args.stride is not None else base_summary.get("stride"),
         "filter_type": args.filter_type or base_summary.get("filter_type"),
         "backend": args.backend or base_summary.get("backend"),
-        "revision": base_summary.get("revision") or git_revision(
-            Path(__file__).resolve().parent.parent),
+        # 报告 revision = 评测执行时的代码 HEAD；绝不被首个 tracker 的 summary 污染
+        # （否则混合基线+实验对照时，revision 会错记成基线跑批时的旧 SHA）。
+        "revision": git_revision(repo_root),
+        "tracker_revisions": tracker_revisions,
+        "iou_threshold": base_summary.get("iou_threshold"),
         "trackeval_version": trackeval_version(),
         "evaluated_sequences": sorted(expected),
         "seqmap_rewritten": seqmap_rewritten,
