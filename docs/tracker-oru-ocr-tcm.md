@@ -2,7 +2,7 @@
 
 > **版本**：0.1.0 — 2026-11-27
 > **范围**：`ai/tracker.py` 与 `rust/omintrack/` 双实现；离线 runner 增加开关。三机制**默认全部关闭（opt-in）**，默认路径行为不变（既有 golden / 等价测试不需重生成）。
-> **状态**：设计定稿，待实现。**完成后先不提交 PR（留审查）**。前置：`docs/tracker-nsa-ocm-hmiou.md`（批次 1+2）、`docs/tracking-quality-benchmark.md`（基线与验收）。
+> **状态**：已实现，**PR #26 待审不合并**；全套件 1524 passed + 1 skipped（修复审查意见后另有小幅提升）。前置：`docs/tracker-nsa-ocm-hmiou.md`（批次 1+2）、`docs/tracking-quality-benchmark.md`（基线与验收）。
 
 ---
 
@@ -33,7 +33,7 @@
 
 ### 2.2 OCR（观测中心恢复）
 
-- 在既有匹配（hungarian/cascade）与 ROI 重检测**之后**，对仍未匹配的 track 与未匹配检测增加一次**二次关联**：
+- 在既有匹配（hungarian/cascade）**之后**、新建 track 与 ROI 重检测**之前**，对仍未匹配的 track 与未匹配检测增加一次**二次关联**：
   - 用 track 的 `last_observation`（最后一次真实观测框）而非 KF 预测框，与剩余检测算 IoU；
   - `IoU > ocr_threshold`（默认 0.3）且类别一致则匹配并 `correct`（走正常 `_update_track`，OCM 观测照常记录；若该 track 处于丢失态且 ORU 开启，则先 ORU 重放）。
 - 仅对丢失态 track（`misses>0`）启用；活跃 track 已在主匹配处理。
@@ -43,8 +43,8 @@
 ### 2.3 TCM（轨迹置信度建模）
 
 - `_Track` 增加**置信度状态**：1 维置信度滤波（conf + 速度的 2 维 KF，或简化为 conf + EMA 速度），输出当前帧期望置信度 `conf_pred`。
-  - 高置信度阶段（cascade 第一阶段 / 单阶段主匹配）：用 KF `predict()` 得 `conf_pred`；
-  - 低置信度阶段（cascade 第二阶段）：用**线性预测**（最近两个置信度观测线性外推）得 `conf_pred`（HybridSORT：KF 难建模低置信度突变，线性预测更合适）。
+  - 高置信度阶段（cascade 第一阶段 / 单阶段主匹配）：用一阶预测（conf + EMA 速度）得 `conf_pred`；
+  - 低置信度阶段（cascade 第二阶段）：**不施加 TCM**（保持低分找回不被置信度差压制）。注：HybridSORT 在此阶段用线性预测建模置信度；本实现二阶段不启用，故无 `conf_pred_low` 生产路径（原死代码已删）。
 - 关联代价（一致性奖励）：`score_dif = |det_conf - conf_pred|`；在既有 `score` 上**减** `score_dif · tcm_weight`（与 HybridSORT `angle_diff_cost -= score_dif * TCM_first_step_weight` 一致，方向为越一致 score 越高）。仅 `tcm_enabled` 时启用，第一阶段（或单阶段）生效；第二阶段默认不加（保持低分找回不被置信度差压制）。
 - 参数：`tcm_enabled=False`、`tcm_weight=0.2`（对应 TCM_first_step_weight）。
 - 与 NSA 的关系：NSA 用 conf 调 R（滤波器内部），TCM 用 conf 一致性做关联（匹配层），正交。
@@ -99,8 +99,12 @@
 - **stride 1 上批次 3 单项为边际改进**：ORU/OCR/TCM 叠加在 full 上 HOTA 基本持平（±0.001 内）、IDSW 小幅下降（DanceTrack full→all：7982→7822；MOT17：1064→1028）。非飞跃，符合"遮挡恢复机制在检测器受限场景收益有限"的预期。
 - **真正价值在 stride 4**：`full+all s4` 是 DanceTrack 全场最优（HOTA 0.2337、AssA 0.1214、IDSW 6261），显著优于 s1 全特性与批次 1+2 的 `full s4`（0.2221/7020）。
 - **闭环批次 1+2 的 stride-4 IDSW 回归**：批次 1+2 时 `full s4` 曾使 DanceTrack IDSW 6730→7020（上升，见 nsa-ocm-hmiou §4.2 的 12.1 披露）；**批次 3 全特性把 stride-4 IDSW 压到 6261，低于 s4 baseline 6730**，MOT17 stride-4 IDSW 亦从 full s4 的 1390 降到 1316（低于 s4 baseline 1371）。即遮挡恢复机制恰好消解了 OCM/HMIoU 在稀疏观测下引入的切换回归——**此前"stride≥4 建议关 OCM"的权宜建议，在全特性下可收回**。
-- **回归门槛核对**：stride 1 全特性较 full 的 HOTA 在 MOT17 微降 0.0005（< 0.002 门槛，无需专项说明）；IDSW 各路径有升有降，stride-4 的改善已如上说明。整体无门槛级回归。
+- **回归门槛核对（逐条，闭环 P1-4）**：方案 §6 要求"MOT17 IDSW 上升须说明"，逐条披露：
+  - `full+oru s1` DanceTrack IDSW 7982→**7988**（+6，+0.08%）：ORU 回滚重放使恢复轨迹更贴近真实运动，个别原本会断链重开的轨迹被保留并延续，极少数情况下延续的轨迹在后续帧发生一次额外线性切换；幅度在噪声量级，HOTA 持平（0.2149→0.2151），可接受。
+  - `full+ocr s1` MOT17 IDSW 1064→**1075**（+11，+1.0%）：OCR 用最后观测恢复预测已偏离的目标，恢复了部分本应过期删除的轨迹，恢复后与邻近轨迹偶发一次身份交换；换来的是轨迹覆盖/连续性提升（IDF1 持平、HOTA 0.4187→0.4186 持平），取舍合理。两处均为千次级数据下的个位数~十位数波动，且全特性叠加后（`full+all`）IDSW 反而低于 full（DanceTrack 7822、MOT17 1028），净效应为正。
+  - HOTA 方面：stride 1 全特性较 full 在 MOT17 微降 0.0005（< 0.002 门槛）；stride-4 的 IDSW 改善见上条。
 - **距 Deep OC-SORT 的差距主因检测器**：DetA≈0.46–0.52 是硬约束；跟踪关联层面的可榨收益已趋缓，下一数量级提升需升级检测器（更强 YOLO 或 DanceTrack 域微调）。
+- **双后端对拍（闭环 P2-4 + P0-1 实证）**：全特性 Python 后端与 Rust 在真实基准上**逐位一致**（DanceTrack ukf_all 0.2152=0.2152、auto_all 0.2153=0.2153；MOT17 ukf_all 0.4182=0.4182、auto_all 0.4283=0.4283）。P0-1（Rust 漏 `ocr_enabled`）修复后双端等价成立；新增"OCR 单开"对拍用例堵住了此前矩阵的盲区。
 - 报告：`benchmark/results/20261127_batch3_dancetrack_val.{json,md}`、`20261127_batch3_mot17_frcnn.{json,md}`。
 
 ## 5. 引用

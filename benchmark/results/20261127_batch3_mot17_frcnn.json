@@ -2,7 +2,7 @@
   "meta": {
     "tag": "batch3_mot17_frcnn",
     "report_schema_version": 2,
-    "date": "2026-11-27T12:06:17.499844+00:00",
+    "date": "2026-11-27T13:27:34.306802+00:00",
     "dataset": "mot17",
     "split": "train",
     "gt_dir": "G:\\基准测试\\MOTChallenge\\MOT17\\train",
@@ -12,16 +12,18 @@
     "stride": 1,
     "filter_type": "ukf",
     "backend": "rust",
-    "revision": "aa0a0ebb6f2ea843291854367c39223f40a67b60",
+    "revision": "d4aa0bbdd42d7f6ddf5bfb1d9b27cb7f08ee6e6f",
     "tracker_revisions": {
       "omintrack_ukf_rust_s1_frcnn": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
       "ukf_full_s1_frcnn_v2": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
-      "ukf_oru_s1_frcnn": "aa0a0ebb6f2ea843291854367c39223f40a67b60",
-      "ukf_ocr_s1_frcnn": "aa0a0ebb6f2ea843291854367c39223f40a67b60",
-      "ukf_tcm_s1_frcnn": "aa0a0ebb6f2ea843291854367c39223f40a67b60",
-      "ukf_all_s1_frcnn": "aa0a0ebb6f2ea843291854367c39223f40a67b60",
-      "ukf_all_s4_frcnn": "aa0a0ebb6f2ea843291854367c39223f40a67b60",
-      "auto_all_s1_frcnn": "aa0a0ebb6f2ea843291854367c39223f40a67b60"
+      "ukf_oru_s1_frcnn": "d4aa0bbdd42d7f6ddf5bfb1d9b27cb7f08ee6e6f",
+      "ukf_ocr_s1_frcnn": "d4aa0bbdd42d7f6ddf5bfb1d9b27cb7f08ee6e6f",
+      "ukf_tcm_s1_frcnn": "d4aa0bbdd42d7f6ddf5bfb1d9b27cb7f08ee6e6f",
+      "ukf_all_s1_frcnn": "d4aa0bbdd42d7f6ddf5bfb1d9b27cb7f08ee6e6f",
+      "ukf_all_s4_frcnn": "d4aa0bbdd42d7f6ddf5bfb1d9b27cb7f08ee6e6f",
+      "auto_all_s1_frcnn": "d4aa0bbdd42d7f6ddf5bfb1d9b27cb7f08ee6e6f",
+      "ukf_all_s1_frcnn_py": "d4aa0bbdd42d7f6ddf5bfb1d9b27cb7f08ee6e6f",
+      "auto_all_s1_frcnn_py": "d4aa0bbdd42d7f6ddf5bfb1d9b27cb7f08ee6e6f"
     },
     "iou_threshold": 0.25,
     "iou_threshold_by_tracker": {
@@ -32,7 +34,91 @@
       "ukf_tcm_s1_frcnn": 0.25,
       "ukf_all_s1_frcnn": 0.25,
       "ukf_all_s4_frcnn": 0.25,
-      "auto_all_s1_frcnn": 0.25
+      "auto_all_s1_frcnn": 0.25,
+      "ukf_all_s1_frcnn_py": 0.25,
+      "auto_all_s1_frcnn_py": 0.25
+    },
+    "tracker_flags": {
+      "omintrack_ukf_rust_s1_frcnn": {
+        "nsa_enabled": false,
+        "ocm_enabled": false,
+        "hmiou_enabled": false,
+        "oru_enabled": null,
+        "ocr_enabled": null,
+        "tcm_enabled": null
+      },
+      "ukf_full_s1_frcnn_v2": {
+        "nsa_enabled": true,
+        "ocm_enabled": true,
+        "hmiou_enabled": true,
+        "oru_enabled": null,
+        "ocr_enabled": null,
+        "tcm_enabled": null
+      },
+      "ukf_oru_s1_frcnn": {
+        "nsa_enabled": true,
+        "ocm_enabled": true,
+        "hmiou_enabled": true,
+        "oru_enabled": true,
+        "ocr_enabled": false,
+        "tcm_enabled": false
+      },
+      "ukf_ocr_s1_frcnn": {
+        "nsa_enabled": true,
+        "ocm_enabled": true,
+        "hmiou_enabled": true,
+        "oru_enabled": false,
+        "ocr_enabled": true,
+        "tcm_enabled": false
+      },
+      "ukf_tcm_s1_frcnn": {
+        "nsa_enabled": true,
+        "ocm_enabled": true,
+        "hmiou_enabled": true,
+        "oru_enabled": false,
+        "ocr_enabled": false,
+        "tcm_enabled": true
+      },
+      "ukf_all_s1_frcnn": {
+        "nsa_enabled": true,
+        "ocm_enabled": true,
+        "hmiou_enabled": true,
+        "oru_enabled": true,
+        "ocr_enabled": true,
+        "tcm_enabled": true
+      },
+      "ukf_all_s4_frcnn": {
+        "nsa_enabled": true,
+        "ocm_enabled": true,
+        "hmiou_enabled": true,
+        "oru_enabled": true,
+        "ocr_enabled": true,
+        "tcm_enabled": true
+      },
+      "auto_all_s1_frcnn": {
+        "nsa_enabled": true,
+        "ocm_enabled": true,
+        "hmiou_enabled": true,
+        "oru_enabled": true,
+        "ocr_enabled": true,
+        "tcm_enabled": true
+      },
+      "ukf_all_s1_frcnn_py": {
+        "nsa_enabled": true,
+        "ocm_enabled": true,
+        "hmiou_enabled": true,
+        "oru_enabled": true,
+        "ocr_enabled": true,
+        "tcm_enabled": true
+      },
+      "auto_all_s1_frcnn_py": {
+        "nsa_enabled": true,
+        "ocm_enabled": true,
+        "hmiou_enabled": true,
+        "oru_enabled": true,
+        "ocr_enabled": true,
+        "tcm_enabled": true
+      }
     },
     "trackeval_version": "1.0.dev1",
     "evaluated_sequences": [
@@ -545,6 +631,142 @@
           "HOTA": 0.47463051893818803,
           "AssA": 0.4815445033778602,
           "DetA": 0.4685732752936468,
+          "IDF1": 0.5592649227979485,
+          "MOTA": 0.5338015434110647,
+          "IDSW": 88.0
+        },
+        "MOT17-05-FRCNN": {
+          "HOTA": 0.4352677610285217,
+          "AssA": 0.44794212667458144,
+          "DetA": 0.424255789240369,
+          "IDF1": 0.5361093038386467,
+          "MOTA": 0.48879572068815963,
+          "IDSW": 65.0
+        },
+        "MOT17-09-FRCNN": {
+          "HOTA": 0.47234236798815665,
+          "AssA": 0.446533466529613,
+          "DetA": 0.49992741198578633,
+          "IDF1": 0.5450203009314545,
+          "MOTA": 0.5423474178403755,
+          "IDSW": 35.0
+        },
+        "MOT17-10-FRCNN": {
+          "HOTA": 0.34701857597663804,
+          "AssA": 0.2748087777166095,
+          "DetA": 0.44139114883216995,
+          "IDF1": 0.39853714285714287,
+          "MOTA": 0.43632681673027496,
+          "IDSW": 276.0
+        },
+        "MOT17-11-FRCNN": {
+          "HOTA": 0.4749942994730862,
+          "AssA": 0.44344209581321803,
+          "DetA": 0.5093307736520835,
+          "IDF1": 0.5386259146538885,
+          "MOTA": 0.5504451038575667,
+          "IDSW": 61.0
+        },
+        "MOT17-13-FRCNN": {
+          "HOTA": 0.4161881375165734,
+          "AssA": 0.3993820343169468,
+          "DetA": 0.4409068462953181,
+          "IDF1": 0.46897719350662287,
+          "MOTA": 0.4189142758976121,
+          "IDSW": 379.0
+        }
+      }
+    },
+    "ukf_all_s1_frcnn_py": {
+      "combined": {
+        "HOTA": 0.4181660470356703,
+        "AssA": 0.405604270450522,
+        "DetA": 0.43306180101398073,
+        "IDF1": 0.48462224646450874,
+        "MOTA": 0.46909534537877234,
+        "IDSW": 1028.0
+      },
+      "per_sequence": {
+        "MOT17-02-FRCNN": {
+          "HOTA": 0.3062696866742957,
+          "AssA": 0.31214495708751877,
+          "DetA": 0.3021148480858887,
+          "IDF1": 0.3611121974111298,
+          "MOTA": 0.3234486841397126,
+          "IDSW": 120.0
+        },
+        "MOT17-04-FRCNN": {
+          "HOTA": 0.45204345719453276,
+          "AssA": 0.44520263813197486,
+          "DetA": 0.45988871209418297,
+          "IDF1": 0.531469477786649,
+          "MOTA": 0.5199234602687302,
+          "IDSW": 92.0
+        },
+        "MOT17-05-FRCNN": {
+          "HOTA": 0.4352677610285217,
+          "AssA": 0.44794212667458144,
+          "DetA": 0.424255789240369,
+          "IDF1": 0.5361093038386467,
+          "MOTA": 0.48879572068815963,
+          "IDSW": 65.0
+        },
+        "MOT17-09-FRCNN": {
+          "HOTA": 0.47234236798815665,
+          "AssA": 0.446533466529613,
+          "DetA": 0.49992741198578633,
+          "IDF1": 0.5450203009314545,
+          "MOTA": 0.5423474178403755,
+          "IDSW": 35.0
+        },
+        "MOT17-10-FRCNN": {
+          "HOTA": 0.34701857597663804,
+          "AssA": 0.2748087777166095,
+          "DetA": 0.44139114883216995,
+          "IDF1": 0.39853714285714287,
+          "MOTA": 0.43632681673027496,
+          "IDSW": 276.0
+        },
+        "MOT17-11-FRCNN": {
+          "HOTA": 0.4749942994730862,
+          "AssA": 0.44344209581321803,
+          "DetA": 0.5093307736520835,
+          "IDF1": 0.5386259146538885,
+          "MOTA": 0.5504451038575667,
+          "IDSW": 61.0
+        },
+        "MOT17-13-FRCNN": {
+          "HOTA": 0.4161881375165734,
+          "AssA": 0.3993820343169468,
+          "DetA": 0.4409068462953181,
+          "IDF1": 0.46897719350662287,
+          "MOTA": 0.4189142758976121,
+          "IDSW": 379.0
+        }
+      }
+    },
+    "auto_all_s1_frcnn_py": {
+      "combined": {
+        "HOTA": 0.4282568110638194,
+        "AssA": 0.4219849962497529,
+        "DetA": 0.4364998172069191,
+        "IDF1": 0.4962926347009392,
+        "MOTA": 0.4749726172560264,
+        "IDSW": 1024.0
+      },
+      "per_sequence": {
+        "MOT17-02-FRCNN": {
+          "HOTA": 0.3062696866742957,
+          "AssA": 0.31214495708751877,
+          "DetA": 0.3021148480858887,
+          "IDF1": 0.3611121974111298,
+          "MOTA": 0.3234486841397126,
+          "IDSW": 120.0
+        },
+        "MOT17-04-FRCNN": {
+          "HOTA": 0.4746336358259141,
+          "AssA": 0.48154792555953674,
+          "DetA": 0.4685761075093801,
           "IDF1": 0.5592649227979485,
           "MOTA": 0.5338015434110647,
           "IDSW": 88.0
