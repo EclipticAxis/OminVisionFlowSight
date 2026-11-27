@@ -144,7 +144,7 @@ MOT17 FRCNN（7 序列）：
 - **⚠️ 回归披露（闭环 12.1，不可省略）**：stride-4 路径上 `+full` 的 **IDSW 上升**——DanceTrack 6730→7020（+290，+4.3%）、MOT17 1371→1390（+19，+1.4%）。这触发 §6 的"MOT17 IDSW 上升须说明"门槛，说明如下：stride 4 每 4 帧才一次观测更新，轨迹以外推为主，OCM 的观测动量在稀疏观测下方向估计噪声增大、HMIoU 在遮挡下更严格，导致更多轨迹切换。取舍依据：该路径 HOTA（0.2170→0.2221）与 AssA（0.1050→0.1090）仍上升，净效应为正；IDSW 小幅上升被更高的关联/检测准确度抵消，可接受。**若部署场景对 ID 连续性极敏感，stride≥4 时建议关闭 OCM**（仅保留 NSA+HMIoU）。
 - **⚠️ 负收益披露（闭环 12.4）**：**OCM 在 MOT17 上仍是轻微负收益**——ukf +nsa 0.4152 → +nsa+ocm 0.4142（−0.001）、auto +nsa 0.4270 → +nsa+ocm 0.4261（−0.0009）。上文"P0-1 修复有效"仅指 DanceTrack 上 OCM 不再帮倒忙，**不代表各数据集都为正**。MOT17 为监控行人、运动相对平缓，OCM 的方向约束在低速目标上区分度低、反而可能误排正确候选；其收益主要体现在 DanceTrack 这类强非线性场景。
 - **回归门槛核对（修正）**：stride 1 各配置 HOTA/IDSW 均无回归；**stride 4 的 IDSW 上升已按 §6 给出说明**（见上）。此前"全部配置无回归（IDSW 多数下降）"的笼统表述不准确，以本条为准。
-- 报告：`benchmark/results/20261127_enhance_v2_dancetrack_val.{json,md}`、`20261127_enhance_v2_mot17_frcnn.{json,md}`（meta 含 `evaluated_sequences`、真实 HEAD `revision`、`iou_threshold`，及 `tracker_revisions` 区分各 run 产出代码）。
+- 报告：`benchmark/results/20261127_enhance_v2_dancetrack_val.{json,md}`、`20261127_enhance_v2_mot17_frcnn.{json,md}`（统一 `report_schema_version=2`；在干净 commit `816a1c2` 上重跑重出，数字与初版逐位一致；`tracker_revisions` 全部 pin 到 `816a1c2`，照此 checkout 即可复现本批数字；meta 含 `evaluated_sequences`、`iou_threshold`、真实 HEAD `revision`）。
 
 ## 5. 引用（公式来源，逐字核对）
 
