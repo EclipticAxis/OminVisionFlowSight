@@ -1,7 +1,8 @@
 {
   "meta": {
     "tag": "baseline_mot17_frcnn",
-    "date": "2026-11-27T09:40:20.668547+00:00",
+    "report_schema_version": 2,
+    "date": "2026-11-27T11:38:54.696981+00:00",
     "dataset": "mot17",
     "split": "train",
     "gt_dir": "G:\\基准测试\\MOTChallenge\\MOT17\\train",
@@ -11,8 +12,31 @@
     "stride": 1,
     "filter_type": "ukf",
     "backend": "rust",
-    "revision": "3278848024614fa5e5fec915220df6b96e3c0dbb",
-    "trackeval_version": "unknown"
+    "revision": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
+    "tracker_revisions": {
+      "omintrack_ukf_rust_s1_frcnn": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
+      "omintrack_ukf_python_s1_frcnn": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
+      "omintrack_auto_rust_s1_frcnn": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
+      "omintrack_ukf_rust_s4_frcnn": "816a1c2ea4beb663617ee51199128d2d5da5efd7"
+    },
+    "iou_threshold": 0.25,
+    "iou_threshold_by_tracker": {
+      "omintrack_ukf_rust_s1_frcnn": 0.25,
+      "omintrack_ukf_python_s1_frcnn": 0.25,
+      "omintrack_auto_rust_s1_frcnn": 0.25,
+      "omintrack_ukf_rust_s4_frcnn": 0.25
+    },
+    "trackeval_version": "1.0.dev1",
+    "evaluated_sequences": [
+      "MOT17-02-FRCNN",
+      "MOT17-04-FRCNN",
+      "MOT17-05-FRCNN",
+      "MOT17-09-FRCNN",
+      "MOT17-10-FRCNN",
+      "MOT17-11-FRCNN",
+      "MOT17-13-FRCNN"
+    ],
+    "seqmap_rewritten": false
   },
   "trackers": {
     "omintrack_ukf_rust_s1_frcnn": {

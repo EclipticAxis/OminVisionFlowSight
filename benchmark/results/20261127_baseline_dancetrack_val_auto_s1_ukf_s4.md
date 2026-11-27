@@ -1,11 +1,11 @@
 # MOT 评测报告 — baseline_dancetrack_val_auto_s1_ukf_s4
 
-- 日期: 2026-11-27T09:29:57.194571+00:00
+- 日期: 2026-11-27T11:38:42.808594+00:00
 - 数据集/split: dancetrack / val
 - 检测协议: private（缓存版本 det_yolov8n_v1）
 - stride: 1  滤波器: auto  后端: rust
-- 代码 revision: 3278848024614fa5e5fec915220df6b96e3c0dbb
-- TrackEval: unknown  GT: G:\基准测试\DanceTrack\val
+- 代码 revision: 816a1c2ea4beb663617ee51199128d2d5da5efd7
+- TrackEval: 1.0.dev1  GT: G:\基准测试\DanceTrack\val
 
 ## 总表（多序列合并）
 

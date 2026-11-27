@@ -1,7 +1,8 @@
 {
   "meta": {
     "tag": "baseline_dancetrack_val_ukf_s1",
-    "date": "2026-11-27T09:28:38.792873+00:00",
+    "report_schema_version": 2,
+    "date": "2026-11-27T11:38:25.271478+00:00",
     "dataset": "dancetrack",
     "split": "val",
     "gt_dir": "G:\\基准测试\\DanceTrack\\val",
@@ -11,8 +12,45 @@
     "stride": 1,
     "filter_type": "ukf",
     "backend": "python",
-    "revision": "3278848024614fa5e5fec915220df6b96e3c0dbb",
-    "trackeval_version": "unknown"
+    "revision": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
+    "tracker_revisions": {
+      "omintrack_ukf_python_s1_priv": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
+      "omintrack_ukf_rust_s1_priv": "816a1c2ea4beb663617ee51199128d2d5da5efd7"
+    },
+    "iou_threshold": 0.25,
+    "iou_threshold_by_tracker": {
+      "omintrack_ukf_python_s1_priv": 0.25,
+      "omintrack_ukf_rust_s1_priv": 0.25
+    },
+    "trackeval_version": "1.0.dev1",
+    "evaluated_sequences": [
+      "dancetrack0004",
+      "dancetrack0005",
+      "dancetrack0007",
+      "dancetrack0010",
+      "dancetrack0014",
+      "dancetrack0018",
+      "dancetrack0019",
+      "dancetrack0025",
+      "dancetrack0026",
+      "dancetrack0030",
+      "dancetrack0034",
+      "dancetrack0035",
+      "dancetrack0041",
+      "dancetrack0043",
+      "dancetrack0047",
+      "dancetrack0058",
+      "dancetrack0063",
+      "dancetrack0065",
+      "dancetrack0073",
+      "dancetrack0077",
+      "dancetrack0079",
+      "dancetrack0081",
+      "dancetrack0090",
+      "dancetrack0094",
+      "dancetrack0097"
+    ],
+    "seqmap_rewritten": false
   },
   "trackers": {
     "omintrack_ukf_python_s1_priv": {

@@ -1,11 +1,11 @@
 # MOT 评测报告 — baseline_mot17_frcnn
 
-- 日期: 2026-11-27T09:40:20.668547+00:00
+- 日期: 2026-11-27T11:38:54.696981+00:00
 - 数据集/split: mot17 / train
 - 检测协议: public-frcnn
 - stride: 1  滤波器: ukf  后端: rust
-- 代码 revision: 3278848024614fa5e5fec915220df6b96e3c0dbb
-- TrackEval: unknown  GT: G:\基准测试\MOTChallenge\MOT17\train
+- 代码 revision: 816a1c2ea4beb663617ee51199128d2d5da5efd7
+- TrackEval: 1.0.dev1  GT: G:\基准测试\MOTChallenge\MOT17\train
 
 ## 总表（多序列合并）
 

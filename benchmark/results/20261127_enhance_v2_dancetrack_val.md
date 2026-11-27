@@ -1,10 +1,10 @@
 # MOT 评测报告 — enhance_v2_dancetrack_val
 
-- 日期: 2026-11-27T11:17:00.711675+00:00
+- 日期: 2026-11-27T11:40:21.483738+00:00
 - 数据集/split: dancetrack / val
 - 检测协议: private（缓存版本 det_yolov8n_v1）
 - stride: 1  滤波器: ukf  后端: rust
-- 代码 revision: 814c8f4994188ded123b189c1fa9316d37018b0b
+- 代码 revision: 816a1c2ea4beb663617ee51199128d2d5da5efd7
 - TrackEval: 1.0.dev1  GT: G:\基准测试\DanceTrack\val
 
 ## 总表（多序列合并）

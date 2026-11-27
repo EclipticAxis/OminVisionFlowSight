@@ -1,7 +1,8 @@
 {
   "meta": {
     "tag": "enhance_v2_mot17_frcnn",
-    "date": "2026-11-27T11:17:28.176436+00:00",
+    "report_schema_version": 2,
+    "date": "2026-11-27T11:40:48.793224+00:00",
     "dataset": "mot17",
     "split": "train",
     "gt_dir": "G:\\基准测试\\MOTChallenge\\MOT17\\train",
@@ -11,20 +12,32 @@
     "stride": 1,
     "filter_type": "ukf",
     "backend": "rust",
-    "revision": "814c8f4994188ded123b189c1fa9316d37018b0b",
+    "revision": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
     "tracker_revisions": {
-      "omintrack_ukf_rust_s1_frcnn": "3278848024614fa5e5fec915220df6b96e3c0dbb",
-      "omintrack_ukf_rust_s4_frcnn": "3278848024614fa5e5fec915220df6b96e3c0dbb",
-      "omintrack_auto_rust_s1_frcnn": "3278848024614fa5e5fec915220df6b96e3c0dbb",
-      "ukf_nsa_s1_frcnn_v2": "71f344a3796000dccefa3619e9f6a16edf07eb26",
-      "ukf_nsa_ocm_s1_frcnn_v2": "71f344a3796000dccefa3619e9f6a16edf07eb26",
-      "ukf_full_s1_frcnn_v2": "71f344a3796000dccefa3619e9f6a16edf07eb26",
-      "ukf_full_s4_frcnn_v2": "71f344a3796000dccefa3619e9f6a16edf07eb26",
-      "auto_nsa_s1_frcnn_v2": "71f344a3796000dccefa3619e9f6a16edf07eb26",
-      "auto_nsa_ocm_s1_frcnn_v2": "71f344a3796000dccefa3619e9f6a16edf07eb26",
-      "auto_full_s1_frcnn_v2": "71f344a3796000dccefa3619e9f6a16edf07eb26"
+      "omintrack_ukf_rust_s1_frcnn": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
+      "omintrack_ukf_rust_s4_frcnn": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
+      "omintrack_auto_rust_s1_frcnn": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
+      "ukf_nsa_s1_frcnn_v2": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
+      "ukf_nsa_ocm_s1_frcnn_v2": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
+      "ukf_full_s1_frcnn_v2": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
+      "ukf_full_s4_frcnn_v2": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
+      "auto_nsa_s1_frcnn_v2": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
+      "auto_nsa_ocm_s1_frcnn_v2": "816a1c2ea4beb663617ee51199128d2d5da5efd7",
+      "auto_full_s1_frcnn_v2": "816a1c2ea4beb663617ee51199128d2d5da5efd7"
     },
     "iou_threshold": 0.25,
+    "iou_threshold_by_tracker": {
+      "omintrack_ukf_rust_s1_frcnn": 0.25,
+      "omintrack_ukf_rust_s4_frcnn": 0.25,
+      "omintrack_auto_rust_s1_frcnn": 0.25,
+      "ukf_nsa_s1_frcnn_v2": 0.25,
+      "ukf_nsa_ocm_s1_frcnn_v2": 0.25,
+      "ukf_full_s1_frcnn_v2": 0.25,
+      "ukf_full_s4_frcnn_v2": 0.25,
+      "auto_nsa_s1_frcnn_v2": 0.25,
+      "auto_nsa_ocm_s1_frcnn_v2": 0.25,
+      "auto_full_s1_frcnn_v2": 0.25
+    },
     "trackeval_version": "1.0.dev1",
     "evaluated_sequences": [
       "MOT17-02-FRCNN",

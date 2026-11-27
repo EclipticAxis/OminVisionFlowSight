@@ -1,12 +1,14 @@
 # 跟踪质量量化基准：MOT17 / MOT20 / DanceTrack
 
-> **版本**：0.2.1 — 2026-11-27
+> **版本**：0.2.2 — 2026-11-27
 > **范围**：批次 0 评测基建的基准选型与协议定型；约束后续所有滤波器/关联层改造（NSA-KF、OCM、HMIoU、TCM、ORU 等）的量化验收方式。不涉及跟踪器行为变更。
 > **状态**：M0 主体完成——基建重建（34 passed + 1 skipped，含 TrackEval 端到端合成用例），DanceTrack val 与 MOT17 FRCNN 基线均已落盘（§6.1），双后端真实基准逐位一致；MOT20 暂未下载（泛化抽查可后补）。
 >
 > **0.2.0 变更**：数据集根目录定为 `G:\基准测试`（用户指定，脚本参数化）；MOTChallenge 网站已于 2026-04-16 转为静态存档、**提交评测通道关闭**，MOT17/20 test 改为"存档 leaderboard 横向参照"（§2、§7）；DanceTrack 官方源为 HF `noahcao/dancetrack`，本机 huggingface.co 不可达，经 hf-mirror.com 下载且**仅需 val.zip**（§2、§5.2）。
 >
 > **0.2.1 变更（PR #21 审计 P0-3 + P1-5）**：① 回归门槛统一为 HOTA 绝对回退 **0.002**（§6，取代 0.2 笔误）；② 评测口径护栏——`evaluate_trackeval.py` 期望序列默认 GT 全量（或 `--seqs`），tracker 结果缺序列**立即报错并列出**（不再静默交集收窄），报告 meta 写入 `evaluated_sequences`，`ensure_seqmap` 缺失才生成、不一致默认报错（仅 `--allow-seqmap-rewrite` 才覆写并记录 `seqmap_rewritten`）。
+>
+> **0.2.2 变更（PR#22 复核 15.1–15.3）**：① `git_revision` 加工作区脏指纹（代码路径、排除产物），产出代码可复现锚点；② 报告加 `report_schema_version=2` 并明确 §4 字段定义（revision=执行时 HEAD / tracker_revisions=各 run 产出代码）；③ `iou_threshold` 收为 per-tracker 集合 + 不一致告警。全部落盘报告在干净 commit `816a1c2` 上重跑重出为 schema v2，数字与初版逐位一致。
 
 ---
 
@@ -52,6 +54,19 @@
 - **stride 矩阵**：stride 1 必测；stride 4 抽测（跳帧预测是本项目特色路径，禁止只测 stride 1）。
 - **双后端**：python / rust 各跑一次，按 `docs/rust-tracker-core.md` §3.1 数值契约核对一致（状态机精确、坐标 1e-6）；Rust 侧需先 `maturin develop --release` 重建。
 - 报告落盘：`benchmark/results/<date>_<revision>_<tag>.json`（机读）+ 同名 `.md`（人读摘要），入库；数据集与检测缓存不入库。
+
+**报告字段定义（`report_schema_version=2`，2026-11-27 起）**：
+
+| 字段 | 含义 |
+|------|------|
+| `report_schema_version` | 报告格式版本。v1=初版（revision=产出 tracker 结果代码、无下述溯源字段）；**v2=现行** |
+| `revision` | **评测执行时的代码 HEAD**（`git rev-parse HEAD` + 脏指纹）。代码路径（`ai`/`rust`/`benchmark`，排除 `results` 等产物）有未提交改动时追加 `-dirty` |
+| `tracker_revisions` | 每个 tracker 各自 summary 记录的 revision——**该 run 产出跟踪结果时的代码**（含脏指纹），用于逐 run 复现 |
+| `iou_threshold` / `iou_threshold_by_tracker` | 关联 IoU 门控阈值；单值为各 tracker 一致时的值，多 tracker 不一致时主字段置 `null` 并告警、以 per-tracker 集合为准 |
+| `evaluated_sequences` | 实际参与评测的序列排序列表（口径可审计，防静默收窄） |
+| `trackeval_version` | 经 `importlib.metadata` 获取的 TrackEval 版本 |
+
+> 复现口径：照某 run 的 `tracker_revisions[tag]` checkout（须非 `-dirty`）重跑跟踪即可复现该 run 数字；`revision` 仅标识报告生成时刻。2026-11-27 已将 M0 基线与 v2 增强全部报告统一为重出为 schema v2（在干净 commit `816a1c2` 上重跑，数字与初版逐位一致）。
 
 ## 5. 评测基建（重建）
 
