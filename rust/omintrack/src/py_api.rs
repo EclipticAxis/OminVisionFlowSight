@@ -186,7 +186,9 @@ impl RustTracker {
                         nsa_enabled=false, nsa_interval=1.0, nsa_min=0.1,
                         nsa_conf_thresh=0.6, nsa_interval_sec=2.0,
                         ocm_enabled=false, ocm_delta_t=3, ocm_weight=0.2,
-                        hmiou_enabled=false))]
+                        hmiou_enabled=false,
+                        oru_enabled=false, ocr_enabled=false, ocr_threshold=0.3,
+                        tcm_enabled=false, tcm_weight=0.2))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         iou_threshold: f64,
@@ -213,6 +215,11 @@ impl RustTracker {
         ocm_delta_t: i32,
         ocm_weight: f64,
         hmiou_enabled: bool,
+        oru_enabled: bool,
+        ocr_enabled: bool,
+        ocr_threshold: f64,
+        tcm_enabled: bool,
+        tcm_weight: f64,
     ) -> Self {
         let core = TrackerCore::new(TrackerParams {
             iou_threshold,
@@ -239,6 +246,11 @@ impl RustTracker {
             ocm_delta_t,
             ocm_weight,
             hmiou_enabled,
+            oru_enabled,
+            ocr_enabled,
+            ocr_threshold,
+            tcm_enabled,
+            tcm_weight,
         });
         RustTracker { core }
     }
@@ -329,7 +341,9 @@ impl RustTracker {
                         nsa_enabled=None, nsa_interval=None, nsa_min=None,
                         nsa_conf_thresh=None, nsa_interval_sec=None,
                         ocm_enabled=None, ocm_delta_t=None, ocm_weight=None,
-                        hmiou_enabled=None))]
+                        hmiou_enabled=None,
+                        oru_enabled=None, ocr_enabled=None, ocr_threshold=None,
+                        tcm_enabled=None, tcm_weight=None))]
     #[allow(clippy::too_many_arguments)]
     fn set_tracker_params(
         &mut self,
@@ -349,6 +363,11 @@ impl RustTracker {
         ocm_delta_t: Option<i32>,
         ocm_weight: Option<f64>,
         hmiou_enabled: Option<bool>,
+        oru_enabled: Option<bool>,
+        ocr_enabled: Option<bool>,
+        ocr_threshold: Option<f64>,
+        tcm_enabled: Option<bool>,
+        tcm_weight: Option<f64>,
     ) {
         self.core.set_tracker_params(
             iou_threshold,
@@ -367,6 +386,11 @@ impl RustTracker {
             ocm_delta_t,
             ocm_weight,
             hmiou_enabled,
+            oru_enabled,
+            ocr_enabled,
+            ocr_threshold,
+            tcm_enabled,
+            tcm_weight,
         );
     }
 

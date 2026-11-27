@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::adaptor::FilterAdaptor;
-use crate::filters::{p_condition_number, FilterKind, KalmanFilter};
+use crate::filters::{p_condition_number, FilterKind, KalmanFilter, Mat4, Mat8, Vec8};
 use crate::geometry::*;
 
 const COLOR_EMA: f64 = 0.9; // 直方图 EMA 系数
@@ -39,6 +39,15 @@ pub struct TrackSnapshot {
     pub polygon: Option<Vec<Point>>,
 }
 
+/// ORU 丢失前 KF 全量快照（x, P, Q, R，docs/tracker-oru-ocr-tcm.md §2.1）。
+#[derive(Clone, Copy)]
+pub struct KfSnapshot {
+    pub x: Vec8,
+    pub p: Mat8,
+    pub q: Mat8,
+    pub r: Mat4,
+}
+
 pub struct Track {
     pub track_id: i64,
     pub label: String,
@@ -62,6 +71,11 @@ pub struct Track {
     pub observations: std::collections::BTreeMap<i32, BBox>,
     pub last_observation: Option<BBox>,
     pub velocity: Option<(f64, f64)>,
+    // ORU：最近一次 correct 后的 KF 全量快照（§2.1，仅 oru_enabled 时维护）
+    pub kf_snapshot: Option<KfSnapshot>,
+    // TCM 置信度状态（§2.3）：最近观测 conf、EMA 速度
+    pub tcm_conf_est: Option<f64>,
+    pub tcm_conf_vel: f64,
 }
 
 impl Track {
@@ -110,7 +124,24 @@ impl Track {
             observations: std::collections::BTreeMap::new(),
             last_observation: Some(box_), // 以创建检测初始化（对应 Python _Track.__init__）
             velocity: None,
+            kf_snapshot: None,
+            tcm_conf_est: None,
+            tcm_conf_vel: 0.0,
         }
+    }
+
+    /// TCM 置信度状态更新（匹配成功时调用，§2.3）：conf + EMA 速度。
+    pub fn tcm_update(&mut self, conf: f64) {
+        if let Some(est) = self.tcm_conf_est {
+            let delta = conf - est;
+            self.tcm_conf_vel = 0.7 * self.tcm_conf_vel + 0.3 * delta;
+        }
+        self.tcm_conf_est = Some(conf);
+    }
+
+    /// 高置信度阶段 conf_pred：滤波状态一步预测（est + vel）。
+    pub fn tcm_conf_pred_high(&self) -> Option<f64> {
+        self.tcm_conf_est.map(|est| est + self.tcm_conf_vel)
     }
 
     /// OCM 参考观测：age-delta_t → 逐帧向后回退到最近可用观测 → last_observation
@@ -326,6 +357,12 @@ pub struct TrackerParams {
     pub ocm_delta_t: i32,
     pub ocm_weight: f64,
     pub hmiou_enabled: bool,
+    // 批次 3（docs/tracker-oru-ocr-tcm.md，默认全部关闭 opt-in）
+    pub oru_enabled: bool,
+    pub ocr_enabled: bool,
+    pub ocr_threshold: f64,
+    pub tcm_enabled: bool,
+    pub tcm_weight: f64,
 }
 
 impl Default for TrackerParams {
@@ -355,6 +392,11 @@ impl Default for TrackerParams {
             ocm_delta_t: 3,
             ocm_weight: 0.2,
             hmiou_enabled: false,
+            oru_enabled: false,
+            ocr_enabled: false,
+            ocr_threshold: 0.3,
+            tcm_enabled: false,
+            tcm_weight: 0.2,
         }
     }
 }
@@ -388,6 +430,12 @@ pub struct TrackerCore {
     pub ocm_delta_t: i32,
     pub ocm_weight: f64,
     pub hmiou_enabled: bool,
+    // 批次 3 配置（默认全关 ⇒ 默认路径行为逐位不变）
+    pub oru_enabled: bool,
+    pub ocr_enabled: bool,
+    pub ocr_threshold: f64,
+    pub tcm_enabled: bool,
+    pub tcm_weight: f64,
 }
 
 impl TrackerCore {
@@ -425,6 +473,11 @@ impl TrackerCore {
             ocm_delta_t: p.ocm_delta_t.max(1),
             ocm_weight: p.ocm_weight,
             hmiou_enabled: p.hmiou_enabled,
+            oru_enabled: p.oru_enabled,
+            ocr_enabled: p.ocr_enabled,
+            ocr_threshold: p.ocr_threshold,
+            tcm_enabled: p.tcm_enabled,
+            tcm_weight: p.tcm_weight,
         }
     }
 
@@ -513,6 +566,11 @@ impl TrackerCore {
         ocm_delta_t: Option<i32>,
         ocm_weight: Option<f64>,
         hmiou_enabled: Option<bool>,
+        oru_enabled: Option<bool>,
+        ocr_enabled: Option<bool>,
+        ocr_threshold: Option<f64>,
+        tcm_enabled: Option<bool>,
+        tcm_weight: Option<f64>,
     ) {
         if let Some(v) = iou_threshold {
             self.iou_threshold = v;
@@ -579,6 +637,21 @@ impl TrackerCore {
         }
         if let Some(v) = hmiou_enabled {
             self.hmiou_enabled = v;
+        }
+        if let Some(v) = oru_enabled {
+            self.oru_enabled = v;
+        }
+        if let Some(v) = ocr_enabled {
+            self.ocr_enabled = v;
+        }
+        if let Some(v) = ocr_threshold {
+            self.ocr_threshold = v;
+        }
+        if let Some(v) = tcm_enabled {
+            self.tcm_enabled = v;
+        }
+        if let Some(v) = tcm_weight {
+            self.tcm_weight = v;
         }
     }
 
@@ -680,8 +753,14 @@ impl TrackerCore {
 
         // --- 2. 匹配策略分发 ---
         let det_conf: Vec<f64> = dets.iter().map(|d| d.confidence).collect();
-        let (mut matched_tids, matched_dis, skip_new) =
+        let (mut matched_tids, mut matched_dis, skip_new) =
             self.run_matching(dets, &det_conf, det_hist, det_emb, reid_active)?;
+
+        // --- 2.5 OCR：丢失态 track 用 last_observation 与剩余检测二次关联（§2.2；
+        // 在新建 track 与 ROI 重检测之前——用已有剩余检测，零额外推理）---
+        if self.ocr_enabled {
+            self.match_ocr(dets, &mut matched_tids, &mut matched_dis)?;
+        }
 
         // --- 3. 未匹配的检测 → 新建 track ---
         for (i, det) in dets.iter().enumerate() {
@@ -710,6 +789,10 @@ impl TrackerCore {
                 }
                 if let Some(Some(e)) = det_emb.get(i) {
                     trk.embedding = Some(e.clone());
+                }
+                // TCM：以创建观测初始化置信度状态
+                if self.tcm_enabled {
+                    trk.tcm_update(det.confidence);
                 }
                 self.tracks.insert(tid, trk);
                 matched_tids.insert(tid); // 新建 track 已 accounted
@@ -746,7 +829,7 @@ impl TrackerCore {
                 let all: Vec<usize> = (0..dets.len()).collect();
                 let (tids, dis) = self.match_hungarian(
                     dets, &all, det_hist, det_emb, reid_active,
-                    self.iou_threshold, 0.05, None,
+                    self.iou_threshold, 0.05, None, true,
                 )?;
                 Ok((tids, dis, BTreeSet::new()))
             }
@@ -812,8 +895,9 @@ impl TrackerCore {
                 let new_box = det.box_;
                 let det_clone = det.clone();
                 let ocm_dt = if self.ocm_enabled { Some(self.ocm_delta_t) } else { None };
+                let (oru, ocr, tcm) = (self.oru_enabled, self.ocr_enabled, self.tcm_enabled);
                 let trk = self.tracks.get_mut(&tid).unwrap();
-                update_track(trk, &det_clone, &new_box, alpha, &mut self.adaptor, ocm_dt)?;
+                update_track(trk, &det_clone, &new_box, alpha, &mut self.adaptor, ocm_dt, oru, ocr, tcm)?;
             }
         }
         Ok((matched_tids, matched_dis, BTreeSet::new()))
@@ -830,6 +914,7 @@ impl TrackerCore {
         iou_gate: f64,
         appearance_weight: f64,
         track_filter: Option<&BTreeSet<i64>>,
+        tcm_apply: bool,
     ) -> Result<(BTreeSet<i64>, BTreeSet<usize>), String> {
         let mut matched_tids: BTreeSet<i64> = BTreeSet::new();
         let mut matched_dis: BTreeSet<usize> = BTreeSet::new();
@@ -849,6 +934,8 @@ impl TrackerCore {
         let ocm_enabled = self.ocm_enabled;
         let ocm_delta_t = self.ocm_delta_t;
         let ocm_weight = self.ocm_weight;
+        let tcm_enabled = self.tcm_enabled;
+        let tcm_weight = self.tcm_weight;
 
         for label in labels {
             if !track_labels.contains(label) {
@@ -934,6 +1021,13 @@ impl TrackerCore {
                                 }
                             }
                         }
+                        // TCM：置信度一致性奖励（§2.3；仅第一阶段/单阶段，
+                        // 第二阶段不加以免低分找回被置信度差压制）
+                        if tcm_enabled && tcm_apply {
+                            if let Some(conf_pred) = trk.tcm_conf_pred_high() {
+                                score -= (det.confidence - conf_pred).abs() * tcm_weight;
+                            }
+                        }
                         cost[di_idx][ti_idx] = 1.0 - score;
                         accepted[di_idx][ti_idx] = true;
                     }
@@ -952,8 +1046,9 @@ impl TrackerCore {
                     let update_emb =
                         reid_active && det_emb.get(di).and_then(|e| e.as_ref()).is_some();
                     let ocm_dt = if self.ocm_enabled { Some(self.ocm_delta_t) } else { None };
+                    let (oru, ocr, tcm) = (self.oru_enabled, self.ocr_enabled, self.tcm_enabled);
                     let trk = self.tracks.get_mut(&tid).unwrap();
-                    update_track(trk, &det_clone, &new_box, alpha, &mut self.adaptor, ocm_dt)?;
+                    update_track(trk, &det_clone, &new_box, alpha, &mut self.adaptor, ocm_dt, oru, ocr, tcm)?;
                     if update_emb {
                         let emb = det_emb[di].as_ref().unwrap().clone();
                         let trk = self.tracks.get_mut(&tid).unwrap();
@@ -963,6 +1058,66 @@ impl TrackerCore {
             }
         }
         Ok((matched_tids, matched_dis))
+    }
+
+    /// OCR 观测中心恢复（§2.2）：丢失态 track 用 last_observation（非预测框）
+    /// 与剩余未匹配检测做 IoU 二次关联（匈牙利分配，门控 ocr_threshold，同类）。
+    /// 匹配成功走正常 update_track（OCM 观测照常记录；ORU 开启且丢失态自动重放）。
+    fn match_ocr(
+        &mut self,
+        dets: &[DetInput],
+        matched_tids: &mut BTreeSet<i64>,
+        matched_dis: &mut BTreeSet<usize>,
+    ) -> Result<(), String> {
+        let lost: Vec<i64> = self
+            .tracks
+            .iter()
+            .filter(|(tid, trk)| {
+                !matched_tids.contains(tid) && trk.misses > 0 && trk.last_observation.is_some()
+            })
+            .map(|(tid, _)| *tid)
+            .collect();
+        let det_indices: Vec<usize> = (0..dets.len())
+            .filter(|i| !matched_dis.contains(i))
+            .collect();
+        if lost.is_empty() || det_indices.is_empty() {
+            return Ok(());
+        }
+        let n_dets = det_indices.len();
+        let n_tracks = lost.len();
+        let mut cost = vec![vec![1e6f64; n_tracks]; n_dets];
+        let mut accepted = vec![vec![false; n_tracks]; n_dets];
+        for (di_idx, &di) in det_indices.iter().enumerate() {
+            let det = &dets[di];
+            for (ti_idx, &tid) in lost.iter().enumerate() {
+                let trk = &self.tracks[&tid];
+                if trk.label != det.label {
+                    continue;
+                }
+                let iou = box_iou(&trk.last_observation.unwrap(), &det.box_);
+                if iou > self.ocr_threshold {
+                    cost[di_idx][ti_idx] = 1.0 - iou;
+                    accepted[di_idx][ti_idx] = true;
+                }
+            }
+        }
+        let alpha = self.smooth_alpha;
+        let ocm_dt = if self.ocm_enabled { Some(self.ocm_delta_t) } else { None };
+        let (oru, ocr, tcm) = (self.oru_enabled, self.ocr_enabled, self.tcm_enabled);
+        let pairs = crate::hungarian::hungarian(&cost);
+        for (r, c) in pairs {
+            if accepted[r][c] {
+                let di = det_indices[r];
+                let tid = lost[c];
+                matched_tids.insert(tid);
+                matched_dis.insert(di);
+                let new_box = dets[di].box_;
+                let det_clone = dets[di].clone();
+                let trk = self.tracks.get_mut(&tid).unwrap();
+                update_track(trk, &det_clone, &new_box, alpha, &mut self.adaptor, ocm_dt, oru, ocr, tcm)?;
+            }
+        }
+        Ok(())
     }
 
     fn match_cascade(
@@ -986,7 +1141,7 @@ impl TrackerCore {
         let all: Vec<usize> = (0..dets.len()).collect();
         let (mut matched_tids, mut matched_dis) = self.match_hungarian(
             dets, &all, det_hist, det_emb, reid_active,
-            self.iou_threshold, 0.05, None,
+            self.iou_threshold, 0.05, None, true,
         )?;
 
         // Stage 2: 低置信度检测 vs Stage1 未匹配 track
@@ -1002,7 +1157,7 @@ impl TrackerCore {
             let low_sorted: Vec<usize> = low.iter().copied().collect();
             let (stage2_tids, stage2_dis) = self.match_hungarian(
                 dets, &low_sorted, det_hist, det_emb, reid_active,
-                self.second_stage_iou_min, 0.30, Some(&unmatched_tids),
+                self.second_stage_iou_min, 0.30, Some(&unmatched_tids), false,
             )?;
             matched_dis.extend(stage2_dis);
             matched_tids.extend(stage2_tids);
@@ -1060,8 +1215,9 @@ impl TrackerCore {
                     if iou_with_pred >= self.redetect_iou_threshold {
                         let alpha = self.smooth_alpha;
                         let ocm_dt = if self.ocm_enabled { Some(self.ocm_delta_t) } else { None };
+                        let (oru, ocr, tcm) = (self.oru_enabled, self.ocr_enabled, self.tcm_enabled);
                         let trk = self.tracks.get_mut(&tid).unwrap();
-                        update_track(trk, &refined, &refined_box, alpha, &mut self.adaptor, ocm_dt)?;
+                        update_track(trk, &refined, &refined_box, alpha, &mut self.adaptor, ocm_dt, oru, ocr, tcm)?;
                         trk.track_state = "redetected".to_string();
                         trk.predicted_only = false;
                         trk.redetect_attempts = 0;
@@ -1090,6 +1246,18 @@ impl TrackerCore {
     }
 }
 
+/// 对 [cx,cy,w,h] 四分量做线性插值并转回 [x1,y1,x2,y2]
+/// （ORU 虚拟观测，对应 Python `_lerp_box_cxcywh`）。
+pub fn lerp_box_cxcywh(a: &BBox, b: &BBox, t: f64) -> BBox {
+    let (acx, acy, aw, ah) = box_to_cxcywh(a);
+    let (bcx, bcy, bw, bh) = box_to_cxcywh(b);
+    let cx = acx + (bcx - acx) * t;
+    let cy = acy + (bcy - acy) * t;
+    let w = aw + (bw - aw) * t;
+    let h = ah + (bh - ah) * t;
+    [cx - w * 0.5, cy - h * 0.5, cx + w * 0.5, cy + h * 0.5]
+}
+
 /// 观测中心动量方向 (Δcy, Δcx)/norm（对应 Python `_speed_direction`；
 /// 零位移返回 None，保护性处理双端一致）。
 pub fn speed_direction(prev_box: &BBox, cur_box: &BBox) -> Option<(f64, f64)> {
@@ -1111,9 +1279,36 @@ fn update_track(
     alpha: f64,
     adaptor: &mut Option<FilterAdaptor>,
     ocm_delta_t: Option<i32>,
+    oru_enabled: bool,
+    ocr_enabled: bool,
+    tcm_enabled: bool,
 ) -> Result<(), String> {
-    // 卡尔曼校正（conf 供 NSA-KF 缩放观测噪声）
-    let corrected_box = trk.kalman.correct(new_box, Some(det.confidence))?;
+    // ORU（§2.1）：丢失态（本帧关联前 misses>0）恢复时，回滚到最近 correct
+    // 后的 KF 快照，用 last_observation→当前观测的线性插值虚拟观测逐帧
+    // predict+correct 重放丢失的 N 帧，最后 predict+correct 真实观测。
+    let corrected_box = if oru_enabled
+        && trk.misses > 0
+        && trk.kf_snapshot.is_some()
+        && trk.last_observation.is_some()
+    {
+        let n_lost = trk.misses;
+        let snap = trk.kf_snapshot.unwrap();
+        trk.kalman.x = snap.x;
+        trk.kalman.p = snap.p;
+        trk.kalman.q = snap.q;
+        trk.kalman.r = snap.r;
+        let last_obs = trk.last_observation.unwrap();
+        for k in 1..=n_lost {
+            let vbox = lerp_box_cxcywh(&last_obs, new_box, k as f64 / (n_lost + 1) as f64);
+            trk.kalman.predict();
+            trk.kalman.correct(&vbox, Some(det.confidence))?; // 虚拟观测 conf=当前观测 conf
+        }
+        trk.kalman.predict();
+        trk.kalman.correct(new_box, Some(det.confidence))?
+    } else {
+        // 卡尔曼校正（conf 供 NSA-KF 缩放观测噪声）
+        trk.kalman.correct(new_box, Some(det.confidence))?
+    };
 
     // AUTO 模式：记录 NIS 和 Cholesky 失败
     if let Some(a) = adaptor {
@@ -1125,9 +1320,27 @@ fn update_track(
         }
     }
 
-    // OCM：仅匹配成功时记录观测并更新速度方向（§2.2）
+    // ORU：保存 correct 后的 KF 全量快照（丢失时以此回滚）
+    if oru_enabled {
+        trk.kf_snapshot = Some(KfSnapshot {
+            x: trk.kalman.x,
+            p: trk.kalman.p,
+            q: trk.kalman.q,
+            r: trk.kalman.r,
+        });
+    }
+
+    // OCM：仅匹配成功时记录观测并更新速度方向（§2.2）；
+    // ORU/OCR 复用 last_observation（OCM 关闭时也要维护）
     if let Some(dt) = ocm_delta_t {
         trk.record_observation(new_box, dt);
+    } else if oru_enabled || ocr_enabled {
+        trk.last_observation = Some(*new_box);
+    }
+
+    // TCM：置信度状态更新（§2.3）
+    if tcm_enabled {
+        trk.tcm_update(det.confidence);
     }
 
     // EMA 平滑 box（用 corrected_box 而非裸 det box）

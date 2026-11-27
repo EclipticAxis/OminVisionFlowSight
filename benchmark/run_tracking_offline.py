@@ -279,7 +279,9 @@ def make_tracker(*, filter_type: str, backend: str, max_output_misses: int,
                  nsa_min: float = 0.1, nsa_conf_thresh: float = 0.6,
                  nsa_interval_sec: float = 2.0, ocm_enabled: bool = False,
                  ocm_delta_t: int = 3, ocm_weight: float = 0.2,
-                 hmiou_enabled: bool = False) -> TrackerLike:
+                 hmiou_enabled: bool = False, oru_enabled: bool = False,
+                 ocr_enabled: bool = False, ocr_threshold: float = 0.3,
+                 tcm_enabled: bool = False, tcm_weight: float = 0.2) -> TrackerLike:
     """构造 DetectionTracker（backend 经 __new__ 分发 python/rust，显式 rust 不可用时抛错）。
 
     跟踪增强（docs/tracker-nsa-ocm-hmiou.md）默认全部关闭，经参数透传。
@@ -303,6 +305,11 @@ def make_tracker(*, filter_type: str, backend: str, max_output_misses: int,
         ocm_delta_t=ocm_delta_t,
         ocm_weight=ocm_weight,
         hmiou_enabled=hmiou_enabled,
+        oru_enabled=oru_enabled,
+        ocr_enabled=ocr_enabled,
+        ocr_threshold=ocr_threshold,
+        tcm_enabled=tcm_enabled,
+        tcm_weight=tcm_weight,
     )
 
 
@@ -368,6 +375,11 @@ def run(
     ocm_delta_t: int = 3,
     ocm_weight: float = 0.2,
     hmiou_enabled: bool = False,
+    oru_enabled: bool = False,
+    ocr_enabled: bool = False,
+    ocr_threshold: float = 0.3,
+    tcm_enabled: bool = False,
+    tcm_weight: float = 0.2,
 ) -> dict:
     sdir = root / _DATASET_RELPATH[dataset] / split
     if not sdir.is_dir():
@@ -414,6 +426,11 @@ def run(
         "ocm_delta_t": ocm_delta_t,
         "ocm_weight": ocm_weight,
         "hmiou_enabled": hmiou_enabled,
+        "oru_enabled": oru_enabled,
+        "ocr_enabled": ocr_enabled,
+        "ocr_threshold": ocr_threshold,
+        "tcm_enabled": tcm_enabled,
+        "tcm_weight": tcm_weight,
         "revision": revision,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "sequences": {},
@@ -435,6 +452,9 @@ def run(
             nsa_conf_thresh=nsa_conf_thresh, nsa_interval_sec=nsa_interval_sec,
             ocm_enabled=ocm_enabled, ocm_delta_t=ocm_delta_t, ocm_weight=ocm_weight,
             hmiou_enabled=hmiou_enabled,
+            oru_enabled=oru_enabled, ocr_enabled=ocr_enabled,
+            ocr_threshold=ocr_threshold, tcm_enabled=tcm_enabled,
+            tcm_weight=tcm_weight,
         )
         t0 = time.perf_counter()
         rows = run_sequence(tracker, dets_by_frame, info, stride=stride, min_conf=min_conf)
@@ -506,6 +526,17 @@ def build_parser():
     p.add_argument("--ocm-weight", type=float, default=0.2, help="OCM 代价权重（默认 0.2）")
     p.add_argument("--hmiou", dest="hmiou_enabled", action="store_true",
                    help="启用 HMIoU（高度调制 IoU，默认关闭；门控更严格，对照需固定阈值）")
+    # 批次 3（docs/tracker-oru-ocr-tcm.md，默认全部关闭）
+    p.add_argument("--oru", dest="oru_enabled", action="store_true",
+                   help="启用 ORU（丢失恢复时回滚重放，默认关闭）")
+    p.add_argument("--ocr", dest="ocr_enabled", action="store_true",
+                   help="启用 OCR（丢失态 track 用最后观测二次关联，默认关闭）")
+    p.add_argument("--ocr-threshold", type=float, default=0.3,
+                   help="OCR IoU 门控（默认 0.3）")
+    p.add_argument("--tcm", dest="tcm_enabled", action="store_true",
+                   help="启用 TCM（置信度一致性奖励，默认关闭）")
+    p.add_argument("--tcm-weight", type=float, default=0.2,
+                   help="TCM 权重（默认 0.2）")
     p.add_argument("--out", type=Path, default=None,
                    help="结果根目录（默认 benchmark/results/runs）")
     p.add_argument("--tracker-tag", default=None,
@@ -544,6 +575,9 @@ def main(argv: Iterable[str] | None = None) -> int:
             nsa_interval_sec=args.nsa_interval_sec, ocm_enabled=args.ocm_enabled,
             ocm_delta_t=args.ocm_delta_t, ocm_weight=args.ocm_weight,
             hmiou_enabled=args.hmiou_enabled,
+            oru_enabled=args.oru_enabled, ocr_enabled=args.ocr_enabled,
+            ocr_threshold=args.ocr_threshold, tcm_enabled=args.tcm_enabled,
+            tcm_weight=args.tcm_weight,
         )
     except (FileNotFoundError, ValueError) as exc:
         print(f"错误: {exc}", file=sys.stderr)

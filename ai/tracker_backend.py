@@ -56,6 +56,12 @@ class RustDetectionTracker:
         ocm_delta_t: int = 3,
         ocm_weight: float = 0.2,
         hmiou_enabled: bool = False,
+        # 批次 3（docs/tracker-oru-ocr-tcm.md，默认全部关闭 opt-in）
+        oru_enabled: bool = False,
+        ocr_enabled: bool = False,
+        ocr_threshold: float = 0.3,
+        tcm_enabled: bool = False,
+        tcm_weight: float = 0.2,
     ):
         import omintrack  # 延迟导入：未安装扩展时不影响 Python 后端
 
@@ -84,6 +90,11 @@ class RustDetectionTracker:
             ocm_delta_t=ocm_delta_t,
             ocm_weight=ocm_weight,
             hmiou_enabled=hmiou_enabled,
+            oru_enabled=oru_enabled,
+            ocr_enabled=ocr_enabled,
+            ocr_threshold=ocr_threshold,
+            tcm_enabled=tcm_enabled,
+            tcm_weight=tcm_weight,
         )
         self._reid_backend = reid_backend
         self._reid_min_tracks = int(reid_min_tracks)
@@ -237,6 +248,11 @@ class RustDetectionTracker:
         ocm_delta_t: int | None = None,
         ocm_weight: float | None = None,
         hmiou_enabled: bool | None = None,
+        oru_enabled: bool | None = None,
+        ocr_enabled: bool | None = None,
+        ocr_threshold: float | None = None,
+        tcm_enabled: bool | None = None,
+        tcm_weight: float | None = None,
     ) -> None:
         self._core.set_tracker_params(
             iou_threshold=iou_threshold,
@@ -255,6 +271,11 @@ class RustDetectionTracker:
             ocm_delta_t=ocm_delta_t,
             ocm_weight=ocm_weight,
             hmiou_enabled=hmiou_enabled,
+            oru_enabled=oru_enabled,
+            ocr_enabled=ocr_enabled,
+            ocr_threshold=ocr_threshold,
+            tcm_enabled=tcm_enabled,
+            tcm_weight=tcm_weight,
         )
 
     # ------------------------------------------------------------------

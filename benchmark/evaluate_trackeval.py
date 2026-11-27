@@ -473,6 +473,13 @@ def main(argv: Iterable[str] | None = None) -> int:
         print(f"警告: 各 tracker iou_threshold 不一致: {distinct_iou}；"
               f"详见 meta.iou_threshold_by_tracker", file=sys.stderr)
     iou_threshold = distinct_iou[0] if len(distinct_iou) == 1 else None
+    # 逐 tracker 特性开关组合（P1-3：落盘即可裁决每个 tracker 实际开关，
+    # 消除 tag 命名与文档表头的歧义；缺 summary 或缺字段记 None）
+    _FLAG_KEYS = ("nsa_enabled", "ocm_enabled", "hmiou_enabled",
+                  "oru_enabled", "ocr_enabled", "tcm_enabled")
+    tracker_flags = {
+        t: {k: s.get(k) for k in _FLAG_KEYS} for t, s in summaries.items()
+    }
     date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
     meta = {
         "tag": args.tag,
@@ -495,6 +502,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         "tracker_revisions": tracker_revisions,
         "iou_threshold": iou_threshold,
         "iou_threshold_by_tracker": iou_by_tracker,
+        "tracker_flags": tracker_flags,
         "trackeval_version": trackeval_version(),
         "evaluated_sequences": sorted(expected),
         "seqmap_rewritten": seqmap_rewritten,

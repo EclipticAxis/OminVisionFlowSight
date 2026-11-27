@@ -89,6 +89,15 @@ rust/omintrack/src/
   - σ 默认 1.0，GUI 0.5–3.0，旧配置超出范围由 loader 回退 1.0；普通噪声下不恒等于 UKF（R 白化使正常帧按信噪比降权，属有意保守性），σ 需场景标定，非有限输入不承诺；对比 S0 白化 σ≈2，R 白化 + σ=1.0 离群抑制更好且正常/真实突变恢复无显著劣势；
 - 匈牙利确定性：矩形代价补零成方阵，与 scipy `linear_sum_assignment` 数学等价；tie-break 行优先、严格小于才更新；
 - Bhattacharyya：任一侧直方图缺失返回 0.5；公式按 float64 复刻 cv2（cv2 内部 float32，交叉验证差 ~3e-9）。
+- **批次 1+2 增强（NSA-KF/OCM/HMIoU，PR #21 合入 + PR #22 审计修复）**（双端同契约，详见 [tracker-nsa-ocm-hmiou](tracker-nsa-ocm-hmiou.md)）：
+  - NSA-KF 分段语义：conf=None→乘子 1.0（中性）；conf>0.6→max((1-conf)·interval, nsa_min=0.1)（缩 R 信任观测）；conf≤0.6→interval_sec=2.0（放大 R 降权观测）；NIS/AUTO 监控恒用未缩放名义 R；
+  - OCM：观测中心动量方向代价 (π/2−|θ|)/π·weight·conf 叠加 score；门控用独立 `accepted` 布尔掩码（**禁用 cost<0.999 数值哨兵**，OCM 负项不再误删合法匹配）；观测仅在匹配成功时写入；
+  - HMIoU：2D IoU × 高度 1 维 IoU（交集 max(0,·) 防负），替换 IoU 项与门控；OBB polygon 路径不变；
+- **批次 3 增强（ORU/OCR/TCM，PR #26 待审）**（双端同契约，详见 [tracker-oru-ocr-tcm](tracker-oru-ocr-tcm.md)）：
+  - ORU：丢失态（misses>0）track 恢复 correct 时回滚到最后 correct 的 KF 快照(x,P,Q,R)，用 last_observation→当前观测的 cxcywh 线性插值虚拟观测逐帧重放丢失 N 帧（撤销本帧 step-0 predict，N 虚拟 + 1 真实），再 correct 真实观测；三种滤波器共用快照字段；
+  - OCR：主匹配之后、新建 track 与 ROI 重检测**之前**，对丢失态 track 用 last_observation（非预测框）与剩余检测做 IoU 二次关联（>ocr_threshold=0.3、同类）；`last_observation` 维护条件双端必须一致——OCM 关时 `oru_enabled || ocr_enabled` 均要刷新（**PR#26 审查 P0-1 曾漏 ocr_enabled 致 OCR 单开双端发散，已修**）；
+  - TCM：置信度状态（conf + EMA 速度），第一阶段一阶预测得 conf_pred，关联 score 减 |det_conf−conf_pred|·weight（0.2）；**二阶段不施加**（conf_pred_low 死代码已删）；
+  - 三批次全部默认全关 opt-in，默认路径 golden 逐位不变；开启路径双端等价（含 OCR 单开档）由 tests/test_tracker_occlusion.py 等锁定。
 
 ### 3.3 修改契约（两侧同步规则）
 
