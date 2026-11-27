@@ -1,8 +1,10 @@
 # 跟踪增强批次 3：ORU + OCR + TCM（遮挡恢复与弱线索）
 
-> **版本**：0.1.0 — 2026-11-27
+> **版本**：0.2.0 — 2026-11-27
 > **范围**：`ai/tracker.py` 与 `rust/omintrack/` 双实现；离线 runner 增加开关。三机制**默认全部关闭（opt-in）**，默认路径行为不变（既有 golden / 等价测试不需重生成）。
 > **状态**：已实现，**PR #26 待审不合并**；全套件 1524 passed + 1 skipped（修复审查意见后另有小幅提升）。前置：`docs/tracker-nsa-ocm-hmiou.md`（批次 1+2）、`docs/tracking-quality-benchmark.md`（基线与验收）。
+>
+> **0.2.0 变更（PR #26 审查修复）**：① P0-1 Rust `last_observation` 维护补 `|| ocr_enabled`（OCR 单开双端等价）；② P1-1 `_match_ocr` scipy 回退排序方向修正（cost 升序=IoU 降序）；③ P1-2 删双端 `tcm_conf_pred_low` 死代码，§2.3 统一"二阶段不施加 TCM"；④ P1-3 报告落 `tracker_flags`；⑤ P1-4 §4.3 两处 IDSW 上升逐条披露；⑥ P2 状态头/§2.2 顺序/rust-tracker-core §3.2 登记/双后端对拍。复核追加：N-1 §4.3 双后端措辞修正（3/4 逐位一致，MOT17 auto 差 ~1.4e-6 系 AUTO 阈值放大浮点噪声）+ N-2 删写-only 死状态 `tcm_conf_prev`。
 
 ---
 
@@ -104,7 +106,7 @@
   - `full+ocr s1` MOT17 IDSW 1064→**1075**（+11，+1.0%）：OCR 用最后观测恢复预测已偏离的目标，恢复了部分本应过期删除的轨迹，恢复后与邻近轨迹偶发一次身份交换；换来的是轨迹覆盖/连续性提升（IDF1 持平、HOTA 0.4187→0.4186 持平），取舍合理。两处均为千次级数据下的个位数~十位数波动，且全特性叠加后（`full+all`）IDSW 反而低于 full（DanceTrack 7822、MOT17 1028），净效应为正。
   - HOTA 方面：stride 1 全特性较 full 在 MOT17 微降 0.0005（< 0.002 门槛）；stride-4 的 IDSW 改善见上条。
 - **距 Deep OC-SORT 的差距主因检测器**：DetA≈0.46–0.52 是硬约束；跟踪关联层面的可榨收益已趋缓，下一数量级提升需升级检测器（更强 YOLO 或 DanceTrack 域微调）。
-- **双后端对拍（闭环 P2-4 + P0-1 实证）**：全特性 Python 后端与 Rust 在真实基准上**逐位一致**（DanceTrack ukf_all 0.2152=0.2152、auto_all 0.2153=0.2153；MOT17 ukf_all 0.4182=0.4182、auto_all 0.4283=0.4283）。P0-1（Rust 漏 `ocr_enabled`）修复后双端等价成立；新增"OCR 单开"对拍用例堵住了此前矩阵的盲区。
+- **双后端对拍（闭环 P2-4 + P0-1 实证）**：全特性 Python/Rust 在真实基准上**3/4 配置逐位一致**（DanceTrack ukf_all 0.2152、auto_all 0.2153、MOT17 ukf_all 0.4182 双端逐位相同，IDSW 亦全一致）。**唯一例外**：MOT17 `auto_all` HOTA rust=0.42825541 vs py=0.42825681，差 **~1.4e-6**，定位到单条序列 MOT17-04-FRCNN——系 nalgebra vs NumPy/LAPACK 的浮点差（~7e-10/帧）被 AUTO 切换的离散阈值（NIS>8.0 / cond>1000 / hysteresis=2）放大所致，属 `docs/rust-tracker-core.md` §3.1 已记录的已知范畴，不影响结论方向。**重要限定**：此前基线报告的"Python/Rust 逐位一致"仅在 **ukf** 上成立，**不能外推到 auto**——auto 含离散滤波器切换，浮点噪声可能被阈值放大；auto 模式的双端对拍是本次才首次加入的。
 - 报告：`benchmark/results/20261127_batch3_dancetrack_val.{json,md}`、`20261127_batch3_mot17_frcnn.{json,md}`。
 
 ## 5. 引用

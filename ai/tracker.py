@@ -628,7 +628,7 @@ class _Track:
         "color_hist", "prev_box", "_color_ema",
         "embedding", "_embedding_ema",
         "observations", "last_observation", "velocity",
-        "kf_snapshot", "tcm_conf_est", "tcm_conf_vel", "tcm_conf_prev",
+        "kf_snapshot", "tcm_conf_est", "tcm_conf_vel",
     )
 
     def __init__(self, track_id: int, label: str, box: np.ndarray, confidence: float, keypoints: list[dict],
@@ -669,7 +669,6 @@ class _Track:
         # TCM 置信度状态（§2.3）：最近观测 conf、EMA 速度、上一观测 conf
         self.tcm_conf_est: float | None = None
         self.tcm_conf_vel: float = 0.0
-        self.tcm_conf_prev: float | None = None
         self.predicted_only = False                          # 是否为纯预测帧
         self.track_state = "normal"                          # normal / predicted / redetected
         self.redetect_attempts = 0                           # 已重检测尝试次数
@@ -686,7 +685,6 @@ class _Track:
         if self.tcm_conf_est is not None:
             delta = c - self.tcm_conf_est
             self.tcm_conf_vel = 0.7 * self.tcm_conf_vel + 0.3 * delta
-            self.tcm_conf_prev = self.tcm_conf_est
         self.tcm_conf_est = c
 
     def tcm_conf_pred_high(self) -> float | None:

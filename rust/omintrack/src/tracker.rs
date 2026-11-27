@@ -76,7 +76,6 @@ pub struct Track {
     // TCM 置信度状态（§2.3）：最近观测 conf、EMA 速度、上一观测 conf
     pub tcm_conf_est: Option<f64>,
     pub tcm_conf_vel: f64,
-    pub tcm_conf_prev: Option<f64>,
 }
 
 impl Track {
@@ -128,7 +127,6 @@ impl Track {
             kf_snapshot: None,
             tcm_conf_est: None,
             tcm_conf_vel: 0.0,
-            tcm_conf_prev: None,
         }
     }
 
@@ -137,7 +135,6 @@ impl Track {
         if let Some(est) = self.tcm_conf_est {
             let delta = conf - est;
             self.tcm_conf_vel = 0.7 * self.tcm_conf_vel + 0.3 * delta;
-            self.tcm_conf_prev = Some(est);
         }
         self.tcm_conf_est = Some(conf);
     }

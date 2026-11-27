@@ -1,6 +1,6 @@
 # 跟踪质量量化基准：MOT17 / MOT20 / DanceTrack
 
-> **版本**：0.2.2 — 2026-11-27
+> **版本**：0.2.3 — 2026-11-27
 > **范围**：批次 0 评测基建的基准选型与协议定型；约束后续所有滤波器/关联层改造（NSA-KF、OCM、HMIoU、TCM、ORU 等）的量化验收方式。不涉及跟踪器行为变更。
 > **状态**：M0 主体完成——基建重建（34 passed + 1 skipped，含 TrackEval 端到端合成用例），DanceTrack val 与 MOT17 FRCNN 基线均已落盘（§6.1），双后端真实基准逐位一致；MOT20 暂未下载（泛化抽查可后补）。
 >
@@ -9,6 +9,8 @@
 > **0.2.1 变更（PR #21 审计 P0-3 + P1-5）**：① 回归门槛统一为 HOTA 绝对回退 **0.002**（§6，取代 0.2 笔误）；② 评测口径护栏——`evaluate_trackeval.py` 期望序列默认 GT 全量（或 `--seqs`），tracker 结果缺序列**立即报错并列出**（不再静默交集收窄），报告 meta 写入 `evaluated_sequences`，`ensure_seqmap` 缺失才生成、不一致默认报错（仅 `--allow-seqmap-rewrite` 才覆写并记录 `seqmap_rewritten`）。
 >
 > **0.2.2 变更（PR#22 复核 15.1–15.3）**：① `git_revision` 加工作区脏指纹（代码路径、排除产物），产出代码可复现锚点；② 报告加 `report_schema_version=2` 并明确 §4 字段定义（revision=执行时 HEAD / tracker_revisions=各 run 产出代码）；③ `iou_threshold` 收为 per-tracker 集合 + 不一致告警。全部落盘报告在干净 commit `816a1c2` 上重跑重出为 schema v2，数字与初版逐位一致。
+>
+> **0.2.3 变更（PR#26 复核 N-1）**：§6.1"逐位一致"结论加限定——仅在 ukf 上成立，auto 模式的 AUTO 离散切换可能放大浮点噪声（批次 3 对拍实测 MOT17 auto HOTA 双端差 ~1.4e-6）。
 
 ---
 
@@ -106,7 +108,7 @@ DanceTrack val / YOLOv8n 私有检测（det_yolov8n_v1，conf=0.25，imgsz=640�
 | auto / rust / s1 | 0.2046 | 0.0842 | 0.5040 | 0.1827 | 0.5485 | 8476 |
 | ukf / rust / s4 | 0.2170 | 0.1050 | 0.4612 | 0.2128 | 0.4862 | 6730 |
 
-结论：① Python/Rust 指标逐位一致，双后端等价在真实基准上成立；② **AssA≈0.08 是主要瓶颈**（关联质量极差，IDSW 高达 8470），印证"差距在关联层而非滤波器"的诊断；③ AUTO 在此基准上与 UKF 几乎无差别；④ stride 4 反而 HOTA/IDSW 略优（高检测噪声下减少误关联），DetA 略降。报告文件：`benchmark/results/20261127_baseline_dancetrack_val_*.json/.md`。
+结论：① Python/Rust 指标逐位一致，双后端等价在真实基准上成立——**限定：该"逐位一致"仅在 ukf 上成立；auto 模式含离散滤波器切换，浮点噪声可能被 AUTO 阈值放大**（批次 3 双后端对拍实测：MOT17 auto HOTA 双端差 ~1.4e-6，定位 MOT17-04，属 §3.1 已知范畴）；② **AssA≈0.08 是主要瓶颈**（关联质量极差，IDSW 高达 8470），印证"差距在关联层而非滤波器"的诊断；③ AUTO 在此基准上与 UKF 几乎无差别；④ stride 4 反而 HOTA/IDSW 略优（高检测噪声下减少误关联），DetA 略降。报告文件：`benchmark/results/20261127_baseline_dancetrack_val_*.json/.md`。
 
 MOT17 train / FRCNN 公开检测 / 7 序列（02/04/05/09/10/11/13）：
 
