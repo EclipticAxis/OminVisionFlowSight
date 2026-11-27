@@ -695,17 +695,6 @@ class _Track:
             return None
         return self.tcm_conf_est + self.tcm_conf_vel
 
-    def tcm_conf_pred_low(self) -> float | None:
-        """低置信度阶段 conf_pred：最近两个观测线性外推（HybridSORT 二阶段语义）。
-
-        当前默认不在第二阶段应用 TCM 项（§2.3），此方法为契约完整性保留。
-        """
-        if self.tcm_conf_est is None:
-            return None
-        if self.tcm_conf_prev is None:
-            return self.tcm_conf_est
-        return 2.0 * self.tcm_conf_est - self.tcm_conf_prev
-
     def previous_observation(self, delta_t: int) -> np.ndarray | None:
         """OCM 参考观测：age-delta_t → 逐帧向后回退到最近可用观测 → last_observation。"""
         for a in range(self.age - int(delta_t), self.age):
@@ -1569,9 +1558,10 @@ class DetectionTracker:
             row_ind, col_ind = linear_sum_assignment(cost)
             pairs = zip(row_ind, col_ind)
         else:
-            # scipy 缺失回退：按 IoU 降序贪婪（确定性 tie-break：tid 升序、det 索引升序）
+            # scipy 缺失回退：按 IoU 降序贪婪（cost=1-iou 升序 = IoU 降序；
+            # 确定性 tie-break：tid 升序、det 索引升序）
             candidates = [
-                (-cost[di_idx, ti_idx], lost_tracks[ti_idx][0], di_idx, ti_idx)
+                (cost[di_idx, ti_idx], lost_tracks[ti_idx][0], di_idx, ti_idx)
                 for di_idx in range(n_dets) for ti_idx in range(n_tracks)
                 if accepted[di_idx, ti_idx]
             ]
@@ -1579,7 +1569,7 @@ class DetectionTracker:
             used_d: set[int] = set()
             used_t: set[int] = set()
             pairs_list = []
-            for _neg, _tid, di_idx, ti_idx in candidates:
+            for _cost, _tid, di_idx, ti_idx in candidates:
                 if di_idx in used_d or ti_idx in used_t:
                     continue
                 used_d.add(di_idx)

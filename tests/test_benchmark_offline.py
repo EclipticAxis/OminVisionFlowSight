@@ -658,3 +658,58 @@ print("GUARD_OK")
     assert proc.returncode == 0 and "GUARD_OK" in proc.stdout, (
         f"guard subprocess failed:\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
     )
+
+def test_evaluate_tracker_flags_in_meta(tmp_path: Path):
+    """P1-3：meta.tracker_flags 从各 tracker summary.json 汇入开关组合（子进程隔离）。"""
+    import importlib.util
+    import subprocess
+    if importlib.util.find_spec("trackeval") is None:
+        pytest.skip("未安装 trackeval")
+
+    gt_dir = tmp_path / "gt"
+    _build_gt_seq(gt_dir, "SYNTH-01")
+    _build_tracker_result(tmp_path / "runs", "tag_base", "SYNTH-01")
+    _build_tracker_result(tmp_path / "runs", "tag_full", "SYNTH-01")
+    (tmp_path / "runs" / "tag_base" / "summary.json").write_text(json.dumps({
+        "det_protocol": "private", "nsa_enabled": False, "ocm_enabled": False,
+        "hmiou_enabled": False, "oru_enabled": False, "ocr_enabled": False,
+        "tcm_enabled": False,
+    }), encoding="utf-8")
+    (tmp_path / "runs" / "tag_full" / "summary.json").write_text(json.dumps({
+        "det_protocol": "private", "nsa_enabled": True, "ocm_enabled": True,
+        "hmiou_enabled": True, "oru_enabled": True, "ocr_enabled": True,
+        "tcm_enabled": True,
+    }), encoding="utf-8")
+
+    project_root = Path(__file__).resolve().parent.parent
+    code = f"""
+import json, sys
+from pathlib import Path
+sys.path.insert(0, {str(project_root)!r})
+from benchmark import evaluate_trackeval as ev
+
+tmp = Path({str(tmp_path)!r})
+rc = ev.main([
+    "--dataset", "mot17", "--root", str(tmp), "--split", "train",
+    "--results-dir", str(tmp / "runs"), "--gt-dir", str(tmp / "gt"),
+    "--out-dir", str(tmp / "results"), "--tag", "flags",
+])
+assert rc == 0, f"rc={{rc}}"
+data = json.loads(next((tmp / "results").glob("*_flags.json")).read_text(encoding="utf-8"))
+flags = data["meta"]["tracker_flags"]
+assert flags["tag_base"] == {{"nsa_enabled": False, "ocm_enabled": False,
+    "hmiou_enabled": False, "oru_enabled": False, "ocr_enabled": False,
+    "tcm_enabled": False}}, flags
+assert flags["tag_full"] == {{"nsa_enabled": True, "ocm_enabled": True,
+    "hmiou_enabled": True, "oru_enabled": True, "ocr_enabled": True,
+    "tcm_enabled": True}}, flags
+print("FLAGS_OK")
+"""
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=str(project_root), timeout=300,
+    )
+    assert proc.returncode == 0 and "FLAGS_OK" in proc.stdout, (
+        f"tracker_flags subprocess failed:\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+    )

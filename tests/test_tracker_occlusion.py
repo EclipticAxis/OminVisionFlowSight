@@ -193,24 +193,73 @@ def test_ocr_runs_before_roi_redetect():
     assert trk.track_state == "normal"
 
 
+def test_ocr_only_dual_backend_last_observation_maintained():
+    """P0-1 回归：OCR 单开（OCM/ORU 均关）时双端 last_observation 维护一致。
+
+    修复前 Rust update_track 的 `else if oru_enabled` 漏 `|| ocr_enabled`：
+    OCR 单开时 Rust 不维护 last_observation（停留在创建帧），OCR 用陈旧观测
+    关联失败 → 双端发散（Python 恢复原 ID、Rust 新建 track）。
+    """
+    kw = dict(ocr_enabled=True, oru_enabled=False, ocm_enabled=False)
+
+    def run(backend):
+        t = DetectionTracker(backend=backend, **kw)
+        for f in range(4):
+            t.update([det_cx(0.30 + 0.05 * f)])
+        for _ in range(3):
+            t.update([])
+        return t, t.update([det_cx(0.45)])   # 检测停在最后观测处
+
+    tp, op = run("python")
+    tr, orr = run("rust")
+    assert len(tp._tracks) == 1, "python：OCR 应恢复原 track"
+    assert [o["track_id"] for o in op] == [1]
+    assert [o["track_id"] for o in orr] == [1], "rust：OCR 单开也必须恢复原 ID（P0-1）"
+    for a, b in zip(op, orr):
+        for k in ("x1", "y1", "x2", "y2", "confidence"):
+            assert abs(a[k] - b[k]) <= 1e-6
+
+
+def test_ocr_scipy_fallback_picks_highest_iou(monkeypatch):
+    """P1-1 回归：屏蔽 scipy 时回退贪婪按 IoU 降序选候选（修复前方向反选最差）。
+
+    候选 A（索引 1）IoU≈0.90、候选 B（索引 0）IoU≈0.33，均过 0.3 门控；
+    回退应选 A。修复前排序键 -cost 升序 = IoU 升序，会错选 B。
+    """
+    monkeypatch.setattr("scipy.optimize.linear_sum_assignment", None)
+    t = DetectionTracker(backend="python", ocr_enabled=True, ocr_threshold=0.3)
+    t.update([det_cx(0.55)])
+    trk = next(iter(t._tracks.values()))
+    trk.misses = 2
+    trk.last_observation = np.array([0.50, 0.10, 0.60, 0.50])
+    det_b = make_det(0.55, 0.10, 0.65, 0.50)   # IoU≈0.333（次优）
+    det_a = make_det(0.505, 0.10, 0.605, 0.50)  # IoU≈0.905（最优）
+    assert 0.3 < _box_iou(trk.last_observation, np.array([0.55, 0.10, 0.65, 0.50])) < 0.5
+    assert _box_iou(trk.last_observation, np.array([0.505, 0.10, 0.605, 0.50])) > 0.85
+    dets = [det_b, det_a]
+    boxes = np.array([[d["x1"], d["y1"], d["x2"], d["y2"]] for d in dets])
+    matched_tids: set[int] = set()
+    matched_dis: set[int] = set()
+    t._match_ocr(dets, boxes, matched_tids, matched_dis)
+    assert matched_tids == {trk.track_id}
+    assert matched_dis == {1}, "回退必须选 IoU 最高的候选（P1-1）"
+
+
 # ---------------------------------------------------------------------------
 # TCM（§2.3）
 # ---------------------------------------------------------------------------
 
 def test_tcm_conf_pred_sources():
-    """conf_pred 来源：高阶段=滤波一步预测（est+vel）；低阶段=两点线性外推。"""
+    """conf_pred 来源：第一阶段=滤波一步预测（est+vel）；第二阶段不施加 TCM。"""
     t = DetectionTracker(backend="python", tcm_enabled=True)
     t.update([det_cx(0.30, conf=0.8)])
     trk = next(iter(t._tracks.values()))
     assert trk.tcm_conf_est == pytest.approx(0.8)
     assert trk.tcm_conf_pred_high() == pytest.approx(0.8)   # vel=0
-    assert trk.tcm_conf_pred_low() == pytest.approx(0.8)    # 无 prev → est
     t.update([det_cx(0.31, conf=0.9)])
     # vel = 0.7*0 + 0.3*(0.9-0.8) = 0.03
     assert trk.tcm_conf_vel == pytest.approx(0.03)
     assert trk.tcm_conf_pred_high() == pytest.approx(0.93)
-    # 线性外推：2*0.9 - 0.8 = 1.0
-    assert trk.tcm_conf_pred_low() == pytest.approx(1.0)
 
 
 def test_tcm_consistency_reward_prefers_matching_conf():

@@ -147,16 +147,6 @@ impl Track {
         self.tcm_conf_est.map(|est| est + self.tcm_conf_vel)
     }
 
-    /// 低置信度阶段 conf_pred：最近两个观测线性外推（HybridSORT 二阶段语义；
-    /// 当前默认不在第二阶段应用 TCM 项，此方法为契约完整性保留）。
-    pub fn tcm_conf_pred_low(&self) -> Option<f64> {
-        let est = self.tcm_conf_est?;
-        match self.tcm_conf_prev {
-            Some(prev) => Some(2.0 * est - prev),
-            None => Some(est),
-        }
-    }
-
     /// OCM 参考观测：age-delta_t → 逐帧向后回退到最近可用观测 → last_observation
     /// （对应 Python `_Track.previous_observation`）。
     pub fn previous_observation(&self, delta_t: i32) -> Option<BBox> {
@@ -908,9 +898,9 @@ impl TrackerCore {
                 let new_box = det.box_;
                 let det_clone = det.clone();
                 let ocm_dt = if self.ocm_enabled { Some(self.ocm_delta_t) } else { None };
-                let (oru, tcm) = (self.oru_enabled, self.tcm_enabled);
+                let (oru, ocr, tcm) = (self.oru_enabled, self.ocr_enabled, self.tcm_enabled);
                 let trk = self.tracks.get_mut(&tid).unwrap();
-                update_track(trk, &det_clone, &new_box, alpha, &mut self.adaptor, ocm_dt, oru, tcm)?;
+                update_track(trk, &det_clone, &new_box, alpha, &mut self.adaptor, ocm_dt, oru, ocr, tcm)?;
             }
         }
         Ok((matched_tids, matched_dis, BTreeSet::new()))
@@ -1059,9 +1049,9 @@ impl TrackerCore {
                     let update_emb =
                         reid_active && det_emb.get(di).and_then(|e| e.as_ref()).is_some();
                     let ocm_dt = if self.ocm_enabled { Some(self.ocm_delta_t) } else { None };
-                    let (oru, tcm) = (self.oru_enabled, self.tcm_enabled);
+                    let (oru, ocr, tcm) = (self.oru_enabled, self.ocr_enabled, self.tcm_enabled);
                     let trk = self.tracks.get_mut(&tid).unwrap();
-                    update_track(trk, &det_clone, &new_box, alpha, &mut self.adaptor, ocm_dt, oru, tcm)?;
+                    update_track(trk, &det_clone, &new_box, alpha, &mut self.adaptor, ocm_dt, oru, ocr, tcm)?;
                     if update_emb {
                         let emb = det_emb[di].as_ref().unwrap().clone();
                         let trk = self.tracks.get_mut(&tid).unwrap();
@@ -1116,8 +1106,7 @@ impl TrackerCore {
         }
         let alpha = self.smooth_alpha;
         let ocm_dt = if self.ocm_enabled { Some(self.ocm_delta_t) } else { None };
-        let oru = self.oru_enabled;
-        let tcm = self.tcm_enabled;
+        let (oru, ocr, tcm) = (self.oru_enabled, self.ocr_enabled, self.tcm_enabled);
         let pairs = crate::hungarian::hungarian(&cost);
         for (r, c) in pairs {
             if accepted[r][c] {
@@ -1128,7 +1117,7 @@ impl TrackerCore {
                 let new_box = dets[di].box_;
                 let det_clone = dets[di].clone();
                 let trk = self.tracks.get_mut(&tid).unwrap();
-                update_track(trk, &det_clone, &new_box, alpha, &mut self.adaptor, ocm_dt, oru, tcm)?;
+                update_track(trk, &det_clone, &new_box, alpha, &mut self.adaptor, ocm_dt, oru, ocr, tcm)?;
             }
         }
         Ok(())
@@ -1229,9 +1218,9 @@ impl TrackerCore {
                     if iou_with_pred >= self.redetect_iou_threshold {
                         let alpha = self.smooth_alpha;
                         let ocm_dt = if self.ocm_enabled { Some(self.ocm_delta_t) } else { None };
-                        let (oru, tcm) = (self.oru_enabled, self.tcm_enabled);
+                        let (oru, ocr, tcm) = (self.oru_enabled, self.ocr_enabled, self.tcm_enabled);
                         let trk = self.tracks.get_mut(&tid).unwrap();
-                        update_track(trk, &refined, &refined_box, alpha, &mut self.adaptor, ocm_dt, oru, tcm)?;
+                        update_track(trk, &refined, &refined_box, alpha, &mut self.adaptor, ocm_dt, oru, ocr, tcm)?;
                         trk.track_state = "redetected".to_string();
                         trk.predicted_only = false;
                         trk.redetect_attempts = 0;
@@ -1294,6 +1283,7 @@ fn update_track(
     adaptor: &mut Option<FilterAdaptor>,
     ocm_delta_t: Option<i32>,
     oru_enabled: bool,
+    ocr_enabled: bool,
     tcm_enabled: bool,
 ) -> Result<(), String> {
     // ORU（§2.1）：丢失态（本帧关联前 misses>0）恢复时，回滚到最近 correct
@@ -1347,7 +1337,7 @@ fn update_track(
     // ORU/OCR 复用 last_observation（OCM 关闭时也要维护）
     if let Some(dt) = ocm_delta_t {
         trk.record_observation(new_box, dt);
-    } else if oru_enabled {
+    } else if oru_enabled || ocr_enabled {
         trk.last_observation = Some(*new_box);
     }
 
