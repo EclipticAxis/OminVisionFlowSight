@@ -66,6 +66,17 @@ def _speed_direction(prev_box: np.ndarray, cur_box: np.ndarray) -> tuple[float, 
     return (dy / norm, dx / norm)
 
 
+def _lerp_box_cxcywh(a: np.ndarray, b: np.ndarray, t: float) -> np.ndarray:
+    """对 [cx,cy,w,h] 四分量做线性插值并转回 [x1,y1,x2,y2]（ORU 虚拟观测，§2.1）。"""
+    ac = _box_to_cxcywh(a)
+    bc = _box_to_cxcywh(b)
+    cx = ac[0] + (bc[0] - ac[0]) * t
+    cy = ac[1] + (bc[1] - ac[1]) * t
+    w = ac[2] + (bc[2] - ac[2]) * t
+    h = ac[3] + (bc[3] - ac[3]) * t
+    return np.array([cx - w * 0.5, cy - h * 0.5, cx + w * 0.5, cy + h * 0.5], dtype=np.float64)
+
+
 def _shape_iou(
     trk_box: np.ndarray,
     trk_polygon: list[tuple[float, float]] | None,
@@ -617,6 +628,7 @@ class _Track:
         "color_hist", "prev_box", "_color_ema",
         "embedding", "_embedding_ema",
         "observations", "last_observation", "velocity",
+        "kf_snapshot", "tcm_conf_est", "tcm_conf_vel", "tcm_conf_prev",
     )
 
     def __init__(self, track_id: int, label: str, box: np.ndarray, confidence: float, keypoints: list[dict],
@@ -652,6 +664,12 @@ class _Track:
         self.observations: dict[int, np.ndarray] = {}
         self.last_observation: np.ndarray | None = self.box.copy()
         self.velocity: tuple[float, float] | None = None     # 观测动量方向 (vy, vx)
+        # ORU：最近一次 correct 后的 KF 全量快照 (x, P, Q, R)（§2.1，仅 oru_enabled 时维护）
+        self.kf_snapshot: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None = None
+        # TCM 置信度状态（§2.3）：最近观测 conf、EMA 速度、上一观测 conf
+        self.tcm_conf_est: float | None = None
+        self.tcm_conf_vel: float = 0.0
+        self.tcm_conf_prev: float | None = None
         self.predicted_only = False                          # 是否为纯预测帧
         self.track_state = "normal"                          # normal / predicted / redetected
         self.redetect_attempts = 0                           # 已重检测尝试次数
@@ -661,6 +679,32 @@ class _Track:
         self._embedding_ema = 0.8                            # embedding EMA 系数
         self.prev_box = self.box.copy()                      # 上一帧 box，用于关键点平移
         self.prev_polygon = [(float(x), float(y)) for x, y in polygon] if polygon else None  # 上一帧 polygon
+
+    def tcm_update(self, conf: float) -> None:
+        """TCM 置信度状态更新（匹配成功时调用，§2.3）：conf + EMA 速度。"""
+        c = float(conf)
+        if self.tcm_conf_est is not None:
+            delta = c - self.tcm_conf_est
+            self.tcm_conf_vel = 0.7 * self.tcm_conf_vel + 0.3 * delta
+            self.tcm_conf_prev = self.tcm_conf_est
+        self.tcm_conf_est = c
+
+    def tcm_conf_pred_high(self) -> float | None:
+        """高置信度阶段 conf_pred：滤波状态一步预测（est + vel）。"""
+        if self.tcm_conf_est is None:
+            return None
+        return self.tcm_conf_est + self.tcm_conf_vel
+
+    def tcm_conf_pred_low(self) -> float | None:
+        """低置信度阶段 conf_pred：最近两个观测线性外推（HybridSORT 二阶段语义）。
+
+        当前默认不在第二阶段应用 TCM 项（§2.3），此方法为契约完整性保留。
+        """
+        if self.tcm_conf_est is None:
+            return None
+        if self.tcm_conf_prev is None:
+            return self.tcm_conf_est
+        return 2.0 * self.tcm_conf_est - self.tcm_conf_prev
 
     def previous_observation(self, delta_t: int) -> np.ndarray | None:
         """OCM 参考观测：age-delta_t → 逐帧向后回退到最近可用观测 → last_observation。"""
@@ -877,6 +921,12 @@ class DetectionTracker:
         ocm_delta_t: int = 3,        # OCM 观测回溯帧数
         ocm_weight: float = 0.2,     # OCM 代价权重（对应 vdc_weight）
         hmiou_enabled: bool = False, # HMIoU：高度 1 维 IoU 调制 2D IoU
+        # === 批次 3（docs/tracker-oru-ocr-tcm.md，默认全部关闭 opt-in）===
+        oru_enabled: bool = False,   # ORU：丢失恢复时回滚重放（观测中心重更新）
+        ocr_enabled: bool = False,   # OCR：丢失态 track 用最后观测二次关联
+        ocr_threshold: float = 0.3,  # OCR IoU 门控
+        tcm_enabled: bool = False,   # TCM：置信度一致性奖励进关联代价
+        tcm_weight: float = 0.2,     # TCM 权重（对应 TCM_first_step_weight）
     ):
         self._iou_threshold = iou_threshold
         self._max_misses = max_misses
@@ -893,6 +943,12 @@ class DetectionTracker:
         self._ocm_delta_t = max(1, int(ocm_delta_t))
         self._ocm_weight = float(ocm_weight)
         self._hmiou_enabled = bool(hmiou_enabled)
+        # 批次 3 配置（默认全关 ⇒ 默认路径行为逐位不变）
+        self._oru_enabled = bool(oru_enabled)
+        self._ocr_enabled = bool(ocr_enabled)
+        self._ocr_threshold = float(ocr_threshold)
+        self._tcm_enabled = bool(tcm_enabled)
+        self._tcm_weight = float(tcm_weight)
         self._smooth_alpha = smooth_alpha
         self._min_hits = min_hits_to_show
         self._next_id = 1
@@ -981,6 +1037,11 @@ class DetectionTracker:
         ocm_delta_t: int | None = None,
         ocm_weight: float | None = None,
         hmiou_enabled: bool | None = None,
+        oru_enabled: bool | None = None,
+        ocr_enabled: bool | None = None,
+        ocr_threshold: float | None = None,
+        tcm_enabled: bool | None = None,
+        tcm_weight: float | None = None,
     ) -> None:
         """批量更新跟踪器参数，运行时生效。
 
@@ -1030,6 +1091,16 @@ class DetectionTracker:
             self._ocm_weight = float(ocm_weight)
         if hmiou_enabled is not None:
             self._hmiou_enabled = bool(hmiou_enabled)
+        if oru_enabled is not None:
+            self._oru_enabled = bool(oru_enabled)
+        if ocr_enabled is not None:
+            self._ocr_enabled = bool(ocr_enabled)
+        if ocr_threshold is not None:
+            self._ocr_threshold = float(ocr_threshold)
+        if tcm_enabled is not None:
+            self._tcm_enabled = bool(tcm_enabled)
+        if tcm_weight is not None:
+            self._tcm_weight = float(tcm_weight)
 
     def update_appearance(self, frame: np.ndarray) -> None:
         """为所有活跃 track 更新外观颜色直方图。"""
@@ -1129,6 +1200,11 @@ class DetectionTracker:
             detections, boxes, det_hist, det_conf, det_emb, reid_active
         )
 
+        # --- 2.5 OCR：丢失态 track 用 last_observation 与剩余检测二次关联（§2.2；
+        # 在新建 track 与 ROI 重检测之前——用已有剩余检测，零额外推理）---
+        if self._ocr_enabled:
+            self._match_ocr(detections, boxes, matched_track_ids, matched_det_indices)
+
         # --- 3. 未匹配的检测 → 新建 track（级联模式下低置信度检测不新建）---
         for i, det in enumerate(detections):
             if i not in matched_det_indices and i not in skip_new:
@@ -1153,6 +1229,9 @@ class DetectionTracker:
                 # 初始化 ReID embedding
                 if det_emb[i] is not None:
                     trk.embedding = det_emb[i].copy()
+                # TCM：以创建观测初始化置信度状态
+                if self._tcm_enabled:
+                    trk.tcm_update(det["confidence"])
                 self._tracks[tid] = trk
                 matched_track_ids.add(tid)  # 新建 track 已被 accounted，不参与后续 miss 逻辑
 
@@ -1272,6 +1351,7 @@ class DetectionTracker:
         track_filter: set[int] | None = None,
         det_emb: list | None = None,
         reid_active: bool = False,
+        tcm_first_stage: bool = True,
     ) -> tuple[set[int], set[int]]:
         """匈牙利全局最优匹配。
 
@@ -1360,6 +1440,12 @@ class DetectionTracker:
                                     theta = math.acos(cos_sim)
                                     angle_term = (math.pi * 0.5 - abs(theta)) / math.pi
                                     score += angle_term * self._ocm_weight * det_conf[di]
+                        # TCM：置信度一致性奖励（§2.3；仅第一阶段/单阶段，
+                        # 第二阶段不加以免低分找回被置信度差压制）
+                        if self._tcm_enabled and tcm_first_stage:
+                            conf_pred = trk.tcm_conf_pred_high()
+                            if conf_pred is not None:
+                                score -= abs(det_conf[di] - conf_pred) * self._tcm_weight
                         cost[di_idx, ti_idx] = 1.0 - score
                         accepted[di_idx, ti_idx] = True
 
@@ -1425,6 +1511,7 @@ class DetectionTracker:
                 appearance_weight=0.30,  # Stage 2 外观权重提升
                 track_filter=unmatched_tids,
                 det_emb=low_emb, reid_active=reid_active,
+                tcm_first_stage=False,   # TCM 第二阶段默认不加（§2.3）
             )
 
             # 将 local 索引映射回原始
@@ -1437,6 +1524,75 @@ class DetectionTracker:
         skip_new = low_indices - matched_dis
 
         return matched_tids, matched_dis, skip_new
+
+    def _match_ocr(
+        self,
+        detections: list[dict],
+        boxes: np.ndarray,
+        matched_track_ids: set[int],
+        matched_det_indices: set[int],
+    ) -> None:
+        """OCR 观测中心恢复（§2.2）：丢失态 track 用 last_observation（非预测框）
+        与剩余未匹配检测做 IoU 二次关联（匈牙利分配，门控 ocr_threshold，同类）。
+
+        匹配成功走正常 _update_track（OCM 观测照常记录；ORU 开启且处于丢失态
+        则自动先重放）。仅 misses>0 的丢失态 track 参与。
+        """
+        lost_tracks = [
+            (tid, trk) for tid, trk in self._tracks.items()
+            if tid not in matched_track_ids and trk.misses > 0
+            and trk.last_observation is not None
+        ]
+        det_indices = [i for i in range(len(detections)) if i not in matched_det_indices]
+        if not lost_tracks or not det_indices:
+            return
+        try:
+            from scipy.optimize import linear_sum_assignment
+        except ImportError:
+            linear_sum_assignment = None
+
+        n_dets = len(det_indices)
+        n_tracks = len(lost_tracks)
+        cost = np.full((n_dets, n_tracks), 1e6, dtype=np.float64)
+        accepted = np.zeros((n_dets, n_tracks), dtype=bool)
+        for di_idx, di in enumerate(det_indices):
+            det_box = boxes[di]
+            det_label = detections[di].get("label", "")
+            for ti_idx, (tid, trk) in enumerate(lost_tracks):
+                if trk.label != det_label:
+                    continue
+                iou = _box_iou(trk.last_observation, det_box)
+                if iou > self._ocr_threshold:
+                    cost[di_idx, ti_idx] = 1.0 - iou
+                    accepted[di_idx, ti_idx] = True
+        if linear_sum_assignment is not None:
+            row_ind, col_ind = linear_sum_assignment(cost)
+            pairs = zip(row_ind, col_ind)
+        else:
+            # scipy 缺失回退：按 IoU 降序贪婪（确定性 tie-break：tid 升序、det 索引升序）
+            candidates = [
+                (-cost[di_idx, ti_idx], lost_tracks[ti_idx][0], di_idx, ti_idx)
+                for di_idx in range(n_dets) for ti_idx in range(n_tracks)
+                if accepted[di_idx, ti_idx]
+            ]
+            candidates.sort()
+            used_d: set[int] = set()
+            used_t: set[int] = set()
+            pairs_list = []
+            for _neg, _tid, di_idx, ti_idx in candidates:
+                if di_idx in used_d or ti_idx in used_t:
+                    continue
+                used_d.add(di_idx)
+                used_t.add(ti_idx)
+                pairs_list.append((di_idx, ti_idx))
+            pairs = pairs_list
+        for r, c in pairs:
+            if accepted[r, c]:
+                di = det_indices[r]
+                tid = lost_tracks[c][0]
+                matched_track_ids.add(tid)
+                matched_det_indices.add(di)
+                self._update_track(tid, detections[di], boxes[di])
 
     def _try_redetect_for_unmatched(
         self,
@@ -1551,8 +1707,27 @@ class DetectionTracker:
         trk = self._tracks[tid]
         alpha = self._smooth_alpha
 
-        # 卡尔曼校正：让速度估计吸收本次观测（conf 供 NSA-KF 缩放观测噪声）
-        corrected_box = trk.kalman.correct(new_box, det["confidence"])
+        # ORU（§2.1）：丢失态（本帧关联前 misses>0）恢复时，回滚到最近 correct
+        # 后的 KF 快照，用 last_observation→当前观测的线性插值虚拟观测逐帧
+        # predict+correct 重放丢失的 N 帧，最后 predict+correct 真实观测。
+        if (self._oru_enabled and trk.misses > 0
+                and trk.kf_snapshot is not None and trk.last_observation is not None):
+            n_lost = trk.misses
+            kf = trk.kalman
+            sx, sp, sq, sr = trk.kf_snapshot
+            kf.x = sx.copy()
+            kf.p = sp.copy()
+            kf.q = sq.copy()
+            kf.r = sr.copy()
+            for k in range(1, n_lost + 1):
+                vbox = _lerp_box_cxcywh(trk.last_observation, new_box, k / (n_lost + 1))
+                kf.predict()
+                kf.correct(vbox, det["confidence"])  # 虚拟观测 conf=当前观测 conf
+            kf.predict()
+            corrected_box = kf.correct(new_box, det["confidence"])
+        else:
+            # 卡尔曼校正：让速度估计吸收本次观测（conf 供 NSA-KF 缩放观测噪声）
+            corrected_box = trk.kalman.correct(new_box, det["confidence"])
 
         # AUTO 模式：记录 NIS 和 Cholesky 失败
         if self._adaptor is not None:
@@ -1562,9 +1737,21 @@ class DetectionTracker:
                 self._adaptor.record_cholesky_fail()
                 trk.kalman.cholesky_failed = False
 
-        # OCM：仅匹配成功时记录观测并更新速度方向（§2.2）
+        # ORU：保存 correct 后的 KF 全量快照（丢失时以此回滚）
+        if self._oru_enabled:
+            kf = trk.kalman
+            trk.kf_snapshot = (kf.x.copy(), kf.p.copy(), kf.q.copy(), kf.r.copy())
+
+        # OCM：仅匹配成功时记录观测并更新速度方向（§2.2）；
+        # ORU/OCR 复用 last_observation（OCM 关闭时也要维护）
         if self._ocm_enabled:
             trk.record_observation(new_box, self._ocm_delta_t)
+        elif self._oru_enabled or self._ocr_enabled:
+            trk.last_observation = new_box.astype(np.float64).copy()
+
+        # TCM：置信度状态更新（§2.3）
+        if self._tcm_enabled:
+            trk.tcm_update(det["confidence"])
 
         # EMA 平滑 box（用 corrected_box 而非裸 det box，类似 RectangleTracker）
         trk.box = alpha * corrected_box + (1.0 - alpha) * trk.box
