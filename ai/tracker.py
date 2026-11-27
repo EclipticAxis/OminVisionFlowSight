@@ -666,7 +666,7 @@ class _Track:
         self.velocity: tuple[float, float] | None = None     # 观测动量方向 (vy, vx)
         # ORU：最近一次 correct 后的 KF 全量快照 (x, P, Q, R)（§2.1，仅 oru_enabled 时维护）
         self.kf_snapshot: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None = None
-        # TCM 置信度状态（§2.3）：最近观测 conf、EMA 速度、上一观测 conf
+        # TCM 置信度状态（§2.3）：最近观测 conf、EMA 速度
         self.tcm_conf_est: float | None = None
         self.tcm_conf_vel: float = 0.0
         self.predicted_only = False                          # 是否为纯预测帧

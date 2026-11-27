@@ -2,7 +2,7 @@
 
 > **版本**：0.2.0 — 2026-11-27
 > **范围**：`ai/tracker.py` 与 `rust/omintrack/` 双实现；离线 runner 增加开关。三机制**默认全部关闭（opt-in）**，默认路径行为不变（既有 golden / 等价测试不需重生成）。
-> **状态**：已实现，**PR #26 待审不合并**；全套件 1524 passed + 1 skipped（修复审查意见后另有小幅提升）。前置：`docs/tracker-nsa-ocm-hmiou.md`（批次 1+2）、`docs/tracking-quality-benchmark.md`（基线与验收）。
+> **状态**：已实现，**PR #26 待审不合并**；全套件 **1527 passed + 1 skipped**（含审查修复新增用例）。前置：`docs/tracker-nsa-ocm-hmiou.md`（批次 1+2）、`docs/tracking-quality-benchmark.md`（基线与验收）。
 >
 > **0.2.0 变更（PR #26 审查修复）**：① P0-1 Rust `last_observation` 维护补 `|| ocr_enabled`（OCR 单开双端等价）；② P1-1 `_match_ocr` scipy 回退排序方向修正（cost 升序=IoU 降序）；③ P1-2 删双端 `tcm_conf_pred_low` 死代码，§2.3 统一"二阶段不施加 TCM"；④ P1-3 报告落 `tracker_flags`；⑤ P1-4 §4.3 两处 IDSW 上升逐条披露；⑥ P2 状态头/§2.2 顺序/rust-tracker-core §3.2 登记/双后端对拍。复核追加：N-1 §4.3 双后端措辞修正（3/4 逐位一致，MOT17 auto 差 ~1.4e-6 系 AUTO 阈值放大浮点噪声）+ N-2 删写-only 死状态 `tcm_conf_prev`。
 
@@ -46,7 +46,7 @@
 
 - `_Track` 增加**置信度状态**：1 维置信度滤波（conf + 速度的 2 维 KF，或简化为 conf + EMA 速度），输出当前帧期望置信度 `conf_pred`。
   - 高置信度阶段（cascade 第一阶段 / 单阶段主匹配）：用一阶预测（conf + EMA 速度）得 `conf_pred`；
-  - 低置信度阶段（cascade 第二阶段）：**不施加 TCM**（保持低分找回不被置信度差压制）。注：HybridSORT 在此阶段用线性预测建模置信度；本实现二阶段不启用，故无 `conf_pred_low` 生产路径（原死代码已删）。
+  - 低置信度阶段（cascade 第二阶段）：**不施加 TCM**（保持低分找回不被置信度差压制）。注：HybridSORT 在此阶段用线性预测建模置信度；本实现二阶段不启用，`conf_pred_low` 方法已完全删除。
 - 关联代价（一致性奖励）：`score_dif = |det_conf - conf_pred|`；在既有 `score` 上**减** `score_dif · tcm_weight`（与 HybridSORT `angle_diff_cost -= score_dif * TCM_first_step_weight` 一致，方向为越一致 score 越高）。仅 `tcm_enabled` 时启用，第一阶段（或单阶段）生效；第二阶段默认不加（保持低分找回不被置信度差压制）。
 - 参数：`tcm_enabled=False`、`tcm_weight=0.2`（对应 TCM_first_step_weight）。
 - 与 NSA 的关系：NSA 用 conf 调 R（滤波器内部），TCM 用 conf 一致性做关联（匹配层），正交。

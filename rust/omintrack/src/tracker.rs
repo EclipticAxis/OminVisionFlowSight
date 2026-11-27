@@ -73,7 +73,7 @@ pub struct Track {
     pub velocity: Option<(f64, f64)>,
     // ORU：最近一次 correct 后的 KF 全量快照（§2.1，仅 oru_enabled 时维护）
     pub kf_snapshot: Option<KfSnapshot>,
-    // TCM 置信度状态（§2.3）：最近观测 conf、EMA 速度、上一观测 conf
+    // TCM 置信度状态（§2.3）：最近观测 conf、EMA 速度
     pub tcm_conf_est: Option<f64>,
     pub tcm_conf_vel: f64,
 }
