@@ -507,6 +507,9 @@ assert abs(combined["HOTA"] - 1.0) < 1e-9, combined
 assert abs(combined["IDF1"] - 1.0) < 1e-9, combined
 assert abs(combined["IDSW"] - 0.0) < 1e-9, combined
 assert data["meta"]["dataset"] == "mot17"
+assert data["meta"]["evaluated_sequences"] == ["SYNTH-01"], data["meta"]
+assert data["meta"]["seqmap_rewritten"] is False, data["meta"]
+assert data["meta"]["trackeval_version"], data["meta"]
 md_files = list(results.glob("*_e2e.md"))
 assert len(md_files) == 1 and "tag_a" in md_files[0].read_text(encoding="utf-8")
 print("E2E_OK")
@@ -518,4 +521,140 @@ print("E2E_OK")
     )
     assert proc.returncode == 0 and "E2E_OK" in proc.stdout, (
         f"trackeval e2e subprocess failed:\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+    )
+
+# ---------------------------------------------------------------------------
+# evaluate_trackeval 评测口径护栏（P0-3）
+# ---------------------------------------------------------------------------
+
+def _build_gt_seq(gt_dir: Path, seq: str, n_frames: int = 4) -> None:
+    """构造 TrackEval GT 布局的最小序列（gt/gt.txt + seqinfo.ini）。"""
+    seq_gt = gt_dir / seq
+    (seq_gt / "gt").mkdir(parents=True, exist_ok=True)
+    rows = "".join(f"{f},1,{10 + 2 * (f - 1)},20,30,40,1,1,1\n" for f in range(1, n_frames + 1))
+    (seq_gt / "gt" / "gt.txt").write_text(rows, encoding="utf-8")
+    (seq_gt / "seqinfo.ini").write_text(
+        f"[Sequence]\nname={seq}\nimDir=img1\nframeRate=30\nseqLength={n_frames}\n"
+        "imWidth=640\nimHeight=480\nimExt=.jpg\n",
+        encoding="utf-8",
+    )
+
+
+def _build_tracker_result(runs_dir: Path, tag: str, seq: str, n_frames: int = 4) -> None:
+    tdir = runs_dir / tag
+    tdir.mkdir(parents=True, exist_ok=True)
+    rows = "".join(
+        f"{f},1,{10 + 2 * (f - 1)},20,30,40,0.9,-1,-1,-1\n" for f in range(1, n_frames + 1)
+    )
+    (tdir / f"{seq}.txt").write_text(rows, encoding="utf-8")
+
+
+def _eval_args(tmp_path: Path, gt_dir: Path, *extra: str) -> list[str]:
+    return [
+        "--dataset", "mot17", "--root", str(tmp_path), "--split", "train",
+        "--results-dir", str(tmp_path / "runs"), "--gt-dir", str(gt_dir),
+        "--out-dir", str(tmp_path / "results"), "--tag", "guard",
+        *extra,
+    ]
+
+
+def test_evaluate_fail_loudly_on_missing_tracker_seqs(tmp_path: Path, capsys):
+    """tracker 结果未覆盖 GT 期望序列 → fail loudly（非零返回 + 缺失清单），不静默收窄。"""
+    gt_dir = tmp_path / "gt"
+    _build_gt_seq(gt_dir, "SYNTH-01")
+    _build_gt_seq(gt_dir, "SYNTH-02")
+    _build_tracker_result(tmp_path / "runs", "tag_a", "SYNTH-01")  # 缺 SYNTH-02
+    rc = ev.main(_eval_args(tmp_path, gt_dir))
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "SYNTH-02" in err
+    assert "缺失" in err
+
+
+def test_evaluate_seqs_unknown_seq_rejected(tmp_path: Path, capsys):
+    """--seqs 指定 GT 中不存在的序列 → 非零返回并提示。"""
+    gt_dir = tmp_path / "gt"
+    _build_gt_seq(gt_dir, "SYNTH-01")
+    _build_tracker_result(tmp_path / "runs", "tag_a", "SYNTH-01")
+    rc = ev.main(_eval_args(tmp_path, gt_dir, "--seqs", "NOPE-99"))
+    assert rc != 0
+    assert "NOPE-99" in capsys.readouterr().err
+
+
+def test_evaluate_seqmap_mismatch_rejected_without_rewrite(tmp_path: Path, capsys):
+    """既有 seqmap 与期望集合不一致 → 报错退出（不覆写）；校验在导入 trackeval 前。"""
+    gt_dir = tmp_path / "gt"
+    _build_gt_seq(gt_dir, "SYNTH-01")
+    _build_gt_seq(gt_dir, "SYNTH-02")
+    _build_tracker_result(tmp_path / "runs", "tag_a", "SYNTH-01")
+    _build_tracker_result(tmp_path / "runs", "tag_a", "SYNTH-02")
+    seqmap_dir = gt_dir / "seqmaps"
+    seqmap_dir.mkdir(parents=True)
+    (seqmap_dir / "MOT17-train.txt").write_text("name\nSYNTH-01\n", encoding="utf-8")
+    rc = ev.main(_eval_args(tmp_path, gt_dir))
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "seqmap" in err
+    # 未覆写
+    assert (seqmap_dir / "MOT17-train.txt").read_text(encoding="utf-8").splitlines()[1:] == ["SYNTH-01"]
+
+
+def test_evaluate_seqs_subset_and_seqmap_rewrite(tmp_path: Path):
+    """子进程：--seqs 子集评测 + seqmap 覆写开关（trackeval 进程级副作用隔离）。"""
+    import importlib.util
+    import subprocess
+    if importlib.util.find_spec("trackeval") is None:
+        pytest.skip("未安装 trackeval")
+
+    gt_dir = tmp_path / "gt"
+    _build_gt_seq(gt_dir, "SYNTH-01")
+    _build_gt_seq(gt_dir, "SYNTH-02")
+    _build_tracker_result(tmp_path / "runs", "tag_a", "SYNTH-01")
+    _build_tracker_result(tmp_path / "runs", "tag_a", "SYNTH-02")
+
+    project_root = Path(__file__).resolve().parent.parent
+    code = f"""
+import json, sys
+from pathlib import Path
+sys.path.insert(0, {str(project_root)!r})
+from benchmark import evaluate_trackeval as ev
+
+tmp = Path({str(tmp_path)!r})
+gt_dir = tmp / "gt"
+base = [
+    "--dataset", "mot17", "--root", str(tmp), "--split", "train",
+    "--results-dir", str(tmp / "runs"), "--gt-dir", str(gt_dir),
+    "--out-dir", str(tmp / "results"),
+]
+seqmap = gt_dir / "seqmaps" / "MOT17-train.txt"
+
+# 1) --seqs 子集：seqmap 缺失 → 按子集生成；报告 evaluated_sequences 为子集
+rc = ev.main(base + ["--tag", "sub", "--seqs", "SYNTH-01"])
+assert rc == 0, f"subset rc={{rc}}"
+data = json.loads(next((tmp / "results").glob("*_sub.json")).read_text(encoding="utf-8"))
+assert data["meta"]["evaluated_sequences"] == ["SYNTH-01"], data["meta"]
+assert data["meta"]["seqmap_rewritten"] is False
+assert seqmap.read_text(encoding="utf-8").splitlines()[1:] == ["SYNTH-01"]
+
+# 2) 全量评测但 seqmap 已是子集 → 不一致报错（非零），不覆写
+rc = ev.main(base + ["--tag", "full"])
+assert rc != 0, "seqmap 不一致应 fail loudly"
+assert seqmap.read_text(encoding="utf-8").splitlines()[1:] == ["SYNTH-01"]
+
+# 3) 显式 --allow-seqmap-rewrite → 覆写并评测全量，meta 记录
+rc = ev.main(base + ["--tag", "fullrw", "--allow-seqmap-rewrite"])
+assert rc == 0, f"rewrite rc={{rc}}"
+data = json.loads(next((tmp / "results").glob("*_fullrw.json")).read_text(encoding="utf-8"))
+assert data["meta"]["evaluated_sequences"] == ["SYNTH-01", "SYNTH-02"], data["meta"]
+assert data["meta"]["seqmap_rewritten"] is True
+assert seqmap.read_text(encoding="utf-8").splitlines()[1:] == ["SYNTH-01", "SYNTH-02"]
+print("GUARD_OK")
+"""
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=str(project_root), timeout=300,
+    )
+    assert proc.returncode == 0 and "GUARD_OK" in proc.stdout, (
+        f"guard subprocess failed:\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
     )

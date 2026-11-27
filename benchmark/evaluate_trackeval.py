@@ -81,37 +81,72 @@ def default_gt_dir(root: Path, dataset: str, split: str) -> Path:
     return root / _DATASET_RELPATH[dataset] / split
 
 
-def ensure_seqmap(gt_dir: Path, benchmark: str, split: str,
-                  required_seqs: set[str] | None = None) -> Path:
-    """保证 TrackEval 需要的 seqmap 文件存在：<gt>/seqmaps/<BENCHMARK>-<split>.txt。
-
-    官方 MOTChallenge zip 自带 seqmaps；DanceTrack 或手工准备的 GT 目录常缺，
-    此处按 GT 目录下的序列子目录名生成（排序，与官方 seqmap 格式一致：首行 name，
-    其后每行一个序列名）。返回 seqmap 路径。
-    """
-    seqmap = gt_dir / "seqmaps" / f"{benchmark}-{split}.txt"
-    seqs = sorted(
+def gt_sequences(gt_dir: Path) -> list[str]:
+    """GT 权威序列集合：含 gt/gt.txt 的序列子目录（排序）。"""
+    return sorted(
         p.name for p in gt_dir.iterdir()
         if p.is_dir() and p.name != "seqmaps" and (p / "gt" / "gt.txt").is_file()
     )
-    if required_seqs is not None:
-        # 只评 tracker 实际产出结果的序列（如 MOT17 仅跑 FRCNN 子集）；
-        # 自动生成的 seqmap 允许被交集版本覆盖，避免 TrackEval 找缺失结果文件。
-        seqs = [s for s in seqs if s in required_seqs]
-        if seqmap.is_file():
-            existing = seqmap.read_text(encoding="utf-8").splitlines()[1:]
-            if [s for s in existing if s.strip()] == seqs:
-                return seqmap
-    elif seqmap.is_file():
-        return seqmap
-    if not seqs:
-        raise RuntimeError(
-            f"GT 目录下没有含 gt/gt.txt 的序列，无法生成 seqmap: {gt_dir}"
-        )
+
+
+def read_seqmap(seqmap: Path) -> list[str]:
+    """读取 seqmap（首行 name 表头，其后每行一个序列名）。"""
+    lines = seqmap.read_text(encoding="utf-8").splitlines()
+    return [ln.strip() for ln in lines[1:] if ln.strip()]
+
+
+def ensure_seqmap(
+    gt_dir: Path,
+    benchmark: str,
+    split: str,
+    expected: list[str],
+    *,
+    allow_rewrite: bool = False,
+) -> tuple[Path, bool]:
+    """保证 TrackEval 需要的 seqmap 存在且与期望评测序列集合一致。
+
+    - 缺失：按期望集合生成（rewritten=False）；
+    - 已存在且一致：直接使用（rewritten=False）；
+    - 已存在但不一致：默认**报错（不覆写）**；仅 allow_rewrite=True 时覆写
+      并返回 rewritten=True（报告 meta 记 seqmap_rewritten）。
+    返回 (seqmap 路径, 是否覆写)。
+    """
+    seqmap = gt_dir / "seqmaps" / f"{benchmark}-{split}.txt"
+    if seqmap.is_file():
+        existing = read_seqmap(seqmap)
+        if sorted(existing) == sorted(expected):
+            return seqmap, False
+        if not allow_rewrite:
+            raise RuntimeError(
+                f"seqmap 与期望评测序列不一致: {seqmap}\n"
+                f"  seqmap 内容({len(existing)}): {sorted(existing)}\n"
+                f"  期望集合({len(expected)}): {sorted(expected)}\n"
+                f"  处理：用 --seqs 对齐期望集合，或人工修正 seqmap；"
+                f"确需覆写请显式加 --allow-seqmap-rewrite。"
+            )
+        seqmap.write_text("name\n" + "\n".join(expected) + "\n", encoding="utf-8")
+        print(f"[info] 已按 --allow-seqmap-rewrite 覆写 seqmap: {seqmap}（{len(expected)} 序列）")
+        return seqmap, True
+    if not expected:
+        raise RuntimeError(f"期望评测序列为空，无法生成 seqmap: {gt_dir}")
     seqmap.parent.mkdir(parents=True, exist_ok=True)
-    seqmap.write_text("name\n" + "\n".join(seqs) + "\n", encoding="utf-8")
-    print(f"[info] 已生成 seqmap: {seqmap}（{len(seqs)} 序列）")
-    return seqmap
+    seqmap.write_text("name\n" + "\n".join(expected) + "\n", encoding="utf-8")
+    print(f"[info] 已生成 seqmap: {seqmap}（{len(expected)} 序列）")
+    return seqmap, False
+
+
+def trackeval_version() -> str:
+    """TrackEval 版本（importlib.metadata；本地 clone 等非 dist 安装回退 unknown）。"""
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+    except ImportError:  # pragma: no cover - py3.11 恒有 importlib.metadata
+        return "unknown"
+    for dist in ("TrackEval", "trackeval"):
+        try:
+            return version(dist)
+        except PackageNotFoundError:
+            continue
+    return "unknown"
 
 
 def run_trackeval(
@@ -293,6 +328,10 @@ def build_parser():
                    help="run_tracking_offline.py 输出根目录（其下每个子目录是一个 tracker-tag）")
     p.add_argument("--trackers", default=None,
                    help="只评指定 tracker-tag（逗号分隔；默认评 results-dir 下全部）")
+    p.add_argument("--seqs", default="all",
+                   help="评测序列范围：all=GT 权威全量（默认），或逗号分隔序列名")
+    p.add_argument("--allow-seqmap-rewrite", action="store_true",
+                   help="允许覆写与期望集合不一致的既有 seqmap（默认报错退出）")
     p.add_argument("--gt-dir", type=Path, default=None,
                    help="GT 根目录（默认 <root>/<数据集布局>/<split>）")
     p.add_argument("--trackeval-dir", type=Path, default=None,
@@ -320,11 +359,6 @@ def main(argv: Iterable[str] | None = None) -> int:
         print(f"错误: 数据集 {args.dataset} 无 split={args.split}"
               f"（可选: {_SPLITS[args.dataset]}）", file=sys.stderr)
         return 2
-    try:
-        trackeval = import_trackeval(args.trackeval_dir)
-    except RuntimeError as exc:
-        print(f"错误: {exc}", file=sys.stderr)
-        return 1
 
     trackers_dir = args.results_dir
     if not trackers_dir.is_dir():
@@ -350,17 +384,59 @@ def main(argv: Iterable[str] | None = None) -> int:
               file=sys.stderr)
         return 1
 
+    # --- 评测口径护栏（P0-3）：期望序列 = GT 权威全量（∩ --seqs 若指定）---
+    gt_seqs = gt_sequences(gt_dir)
+    if not gt_seqs:
+        print(f"错误: GT 目录下没有含 gt/gt.txt 的序列: {gt_dir}", file=sys.stderr)
+        return 1
+    if args.seqs != "all":
+        requested = [s.strip() for s in args.seqs.split(",") if s.strip()]
+        unknown = [s for s in requested if s not in gt_seqs]
+        if unknown:
+            print(f"错误: --seqs 中序列不在 GT 中: {unknown}（GT 序列: {gt_seqs}）",
+                  file=sys.stderr)
+            return 1
+        expected = [s for s in gt_seqs if s in requested]
+    else:
+        expected = gt_seqs
+
+    # 覆盖检查：任何被评 tracker 缺期望序列结果 → fail loudly（不再静默取交集收窄）
+    coverage_errors: list[tuple[str, list[str]]] = []
+    for t in tags:
+        have = {p.stem for p in (trackers_dir / t).glob("*.txt")}
+        missing_seqs = [s for s in expected if s not in have]
+        if missing_seqs:
+            coverage_errors.append((t, missing_seqs))
+    if coverage_errors:
+        print("错误: tracker 结果未覆盖期望评测序列（fail loudly，不静默收窄）:",
+              file=sys.stderr)
+        for t, ms in coverage_errors:
+            print(f"  {t}: 缺失 {len(ms)} 个序列: {ms}", file=sys.stderr)
+        print("处理: 补齐缺失序列的跟踪结果，或用 --seqs 显式限定评测范围。",
+              file=sys.stderr)
+        return 1
+
+    # seqmap 护栏：缺失才生成；不一致默认报错（--allow-seqmap-rewrite 才覆写）
+    try:
+        _seqmap_path, seqmap_rewritten = ensure_seqmap(
+            gt_dir, _BENCHMARK_NAME[args.dataset], args.split, expected,
+            allow_rewrite=args.allow_seqmap_rewrite,
+        )
+    except RuntimeError as exc:
+        print(f"错误: {exc}", file=sys.stderr)
+        return 1
+
+    # 全部本地校验通过后再导入 trackeval（重依赖 + NumPy 兼容 shim）
+    try:
+        trackeval = import_trackeval(args.trackeval_dir)
+    except RuntimeError as exc:
+        print(f"错误: {exc}", file=sys.stderr)
+        return 1
+
     out_dir: Path = args.out_dir
     te_out = out_dir / "_trackeval_workspace"
     te_out.mkdir(parents=True, exist_ok=True)
     try:
-        # 各 tracker 结果序列的交集作为评测范围（缺结果的序列不评）。
-        result_seqs: set[str] | None = None
-        for t in tags:
-            seqs_t = {p.stem for p in (trackers_dir / t).glob("*.txt")}
-            result_seqs = seqs_t if result_seqs is None else (result_seqs & seqs_t)
-        ensure_seqmap(gt_dir, _BENCHMARK_NAME[args.dataset], args.split,
-                      required_seqs=result_seqs)
         output_res = run_trackeval(
             trackeval=trackeval,
             benchmark=_BENCHMARK_NAME[args.dataset],
@@ -388,7 +464,9 @@ def main(argv: Iterable[str] | None = None) -> int:
         "backend": args.backend or base_summary.get("backend"),
         "revision": base_summary.get("revision") or git_revision(
             Path(__file__).resolve().parent.parent),
-        "trackeval_version": getattr(trackeval, "__version__", "unknown"),
+        "trackeval_version": trackeval_version(),
+        "evaluated_sequences": sorted(expected),
+        "seqmap_rewritten": seqmap_rewritten,
     }
     report = {
         "meta": meta,
