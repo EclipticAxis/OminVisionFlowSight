@@ -36,3 +36,7 @@ Thumbs.db
 .DS_Store
 # Runtime-generated squircle tiles (color swatch etc.)
 gui/assets/squircle/_runtime/
+
+# MOT benchmark intermediates (only results/*.json|*.md reports are committed)
+benchmark/results/runs/
+benchmark/results/_trackeval_workspace/

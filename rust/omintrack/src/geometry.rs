@@ -40,6 +40,18 @@ pub fn box_iou(a: &BBox, b: &BBox) -> f64 {
     }
 }
 
+/// 高度 1 维 IoU（HMIoU 调制项，对应 Python `_height_iou`，
+/// docs/tracker-nsa-ocm-hmiou.md §2.3）；交集长度 max(0,·) 防负为保护性改动。
+pub fn height_iou(a: &BBox, b: &BBox) -> f64 {
+    let inter = (a[3].min(b[3]) - a[1].max(b[1])).max(0.0);
+    let span = a[3].max(b[3]) - a[1].min(b[1]);
+    if span > 1e-8 {
+        inter / span
+    } else {
+        0.0
+    }
+}
+
 /// Shoelace 有向面积的两倍；正值 = CCW，负值 = CW。
 fn signed_area2(p: &[Point]) -> f64 {
     let n = p.len();

@@ -46,6 +46,14 @@ class RustDetectionTracker:
         reid_min_tracks: int = 3,
         reid_stride: int = 3,
         max_output_misses: int = 0,
+        # 跟踪增强（docs/tracker-nsa-ocm-hmiou.md，默认全部关闭 opt-in）
+        nsa_enabled: bool = False,
+        nsa_interval: float = 1.0,
+        nsa_min: float = 0.1,
+        ocm_enabled: bool = False,
+        ocm_delta_t: int = 3,
+        ocm_weight: float = 0.2,
+        hmiou_enabled: bool = False,
     ):
         import omintrack  # 延迟导入：未安装扩展时不影响 Python 后端
 
@@ -65,6 +73,13 @@ class RustDetectionTracker:
             second_stage_iou_min=second_stage_iou_min,
             redetect_budget=redetect_budget,
             max_output_misses=max_output_misses,
+            nsa_enabled=nsa_enabled,
+            nsa_interval=nsa_interval,
+            nsa_min=nsa_min,
+            ocm_enabled=ocm_enabled,
+            ocm_delta_t=ocm_delta_t,
+            ocm_weight=ocm_weight,
+            hmiou_enabled=hmiou_enabled,
         )
         self._reid_backend = reid_backend
         self._reid_min_tracks = int(reid_min_tracks)
@@ -209,6 +224,13 @@ class RustDetectionTracker:
         velocity_clip: float | None = None,
         second_stage_iou_min: float | None = None,
         max_output_misses: int | None = None,
+        nsa_enabled: bool | None = None,
+        nsa_interval: float | None = None,
+        nsa_min: float | None = None,
+        ocm_enabled: bool | None = None,
+        ocm_delta_t: int | None = None,
+        ocm_weight: float | None = None,
+        hmiou_enabled: bool | None = None,
     ) -> None:
         self._core.set_tracker_params(
             iou_threshold=iou_threshold,
@@ -218,6 +240,13 @@ class RustDetectionTracker:
             velocity_clip=velocity_clip,
             second_stage_iou_min=second_stage_iou_min,
             max_output_misses=max_output_misses,
+            nsa_enabled=nsa_enabled,
+            nsa_interval=nsa_interval,
+            nsa_min=nsa_min,
+            ocm_enabled=ocm_enabled,
+            ocm_delta_t=ocm_delta_t,
+            ocm_weight=ocm_weight,
+            hmiou_enabled=hmiou_enabled,
         )
 
     # ------------------------------------------------------------------

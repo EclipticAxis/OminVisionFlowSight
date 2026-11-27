@@ -48,6 +48,10 @@ pub struct KalmanFilter {
     pub q: Mat8,
     pub r: Mat4,
     pub velocity_clip: f64,
+    // NSA-KF 观测噪声自适应（docs/tracker-nsa-ocm-hmiou.md §2.1，默认关闭）
+    pub nsa_enabled: bool,
+    pub nsa_interval: f64,
+    pub nsa_min: f64,
     kernel_sigma: f64, // 相关熵核带宽 σ（固定值，无尺寸缩放）
     max_iter: usize,   // 不动点迭代上限（默认 3）
     wm: [f64; N_SIGMA],
@@ -83,6 +87,9 @@ impl KalmanFilter {
             q: Mat8::identity() * 0.0010,
             r: Mat4::identity() * 0.012,
             velocity_clip,
+            nsa_enabled: false,
+            nsa_interval: 1.0,
+            nsa_min: 0.1,
             kernel_sigma: kernel_sigma.max(0.01),
             max_iter: 3,
             wm,
@@ -105,6 +112,15 @@ impl KalmanFilter {
         r[(2, 2)] = base_size_var;
         r[(3, 3)] = base_size_var;
         self.r = r;
+    }
+
+    /// NSA-KF 乘子（对应 `_nsa_multiplier`）：关闭时恒 1.0；
+    /// nsa_min 截断为保护性改动（防 conf→1 时 R 退化），非原文行为。
+    fn nsa_multiplier(&self, conf: f64) -> f64 {
+        if !self.nsa_enabled {
+            return 1.0;
+        }
+        ((1.0 - conf) * self.nsa_interval).clamp(self.nsa_min, 1.0)
     }
 
     /// NIS 自适应 Q（对应 `_adapt_q`）。
@@ -278,7 +294,7 @@ impl KalmanFilter {
     }
 
     /// UKF / ManifoldUKF 更新（对应两者的 `correct`）。
-    fn correct_base(&mut self, box_: &BBox) -> Result<BBox, String> {
+    fn correct_base(&mut self, box_: &BBox, conf: f64) -> Result<BBox, String> {
         let (cx, cy, w, h) = box_to_cxcywh(box_);
         let z = Vec8::from_row_slice(&[cx, cy, w, h, 0.0, 0.0, 0.0, 0.0]); // 仅用前 4 维
         self.make_r(w, h);
@@ -315,6 +331,16 @@ impl KalmanFilter {
             self.adapt_q(nis);
         }
 
+        // NSA-KF：仅影响 K 与状态/协方差更新的有效 S（NIS/AUTO 监控已用未缩放 R）；
+        // R 为对角，仅对角元需要调整
+        let s_trace_nominal = s.trace();
+        let nsa_mult = self.nsa_multiplier(conf);
+        if nsa_mult != 1.0 {
+            for i in 0..4 {
+                s[(i, i)] += (nsa_mult - 1.0) * self.r[(i, i)];
+            }
+        }
+
         // Pxz = (dx * wc) @ dz^T
         let mut pxz = Mat84::zeros();
         for j in 0..N_SIGMA {
@@ -349,9 +375,9 @@ impl KalmanFilter {
             }
         }
         if self.kind == FilterKind::ManifoldUkf {
-            // ManifoldUKF 在末尾记录创新息统计并自适应 Q
+            // ManifoldUKF 在末尾记录创新息统计并自适应 Q（用未 NSA 缩放的 S）
             self.last_innovation_sq = innov_sq;
-            self.last_s_trace = s.trace();
+            self.last_s_trace = s_trace_nominal;
             let nis2 = self.last_innovation_sq / self.last_s_trace.max(1e-10);
             self.adapt_q(nis2);
         }
@@ -367,10 +393,13 @@ impl KalmanFilter {
     ///    R_eff = R C⁻¹（对角），K = Pxz (Pzz + R_eff)⁻¹，x_new = x_pred + K (z - z_pred)；
     /// 3. 位移 < 1e-6 接受并停止；达到上限使用最后鲁棒迭代的 K / R_eff / x；
     /// 4. 最终 Joseph 用同一 K / R_eff，NIS 用原始 r0 / S0；核带宽 σ 无尺寸缩放。
-    fn correct_mcukf(&mut self, box_: &BBox) -> Result<BBox, String> {
+    fn correct_mcukf(&mut self, box_: &BBox, conf: f64) -> Result<BBox, String> {
         let (cx, cy, w, h) = box_to_cxcywh(box_);
         let z = Vec8::from_row_slice(&[cx, cy, w, h, 0.0, 0.0, 0.0, 0.0]);
         self.make_r(w, h);
+        // NSA-KF：先得到 NSA 缩放的名义 R，IRLS 白化在其基础上进行（叠加顺序 §2.1）；
+        // NIS 统计仍用未缩放的 self.r（S0 = Pzz + R）
+        let nsa_mult = self.nsa_multiplier(conf);
         let sigma = self.kernel_sigma;
         let two_sigma_sq = 2.0 * sigma * sigma;
 
@@ -412,9 +441,10 @@ impl KalmanFilter {
             // y 按名义 R 对角 std 白化，C = diag(c)，R_eff = R C⁻¹（对角）
             r_eff = Mat4::zeros();
             for i in 0..4 {
-                let y = residual[i] / self.r[(i, i)].sqrt();
+                let r_nsa_ii = self.r[(i, i)] * nsa_mult; // NSA 缩放后的名义 R 对角元
+                let y = residual[i] / r_nsa_ii.sqrt();
                 let c = (-y * y / two_sigma_sq).exp().clamp(1e-4, 1.0);
-                r_eff[(i, i)] = self.r[(i, i)] / c;
+                r_eff[(i, i)] = r_nsa_ii / c;
             }
             let s_r = pzz + r_eff;
             let s_inv = s_r
@@ -465,11 +495,11 @@ impl KalmanFilter {
         Ok(self.to_box())
     }
 
-    pub fn correct(&mut self, box_: &BBox) -> Result<BBox, String> {
+    pub fn correct(&mut self, box_: &BBox, conf: f64) -> Result<BBox, String> {
         if self.kind == FilterKind::McUkf {
-            self.correct_mcukf(box_)
+            self.correct_mcukf(box_, conf)
         } else {
-            self.correct_base(box_)
+            self.correct_base(box_, conf)
         }
     }
 
