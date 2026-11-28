@@ -39,6 +39,7 @@ class SettingsDialog(QDialog):
     _KEY_AI_MODEL_PATH = "ai/model_path"
     _KEY_AI_PERSON_ENABLED = "ai/person_enabled"
     _KEY_AI_SKELETON_ENABLED = "ai/skeleton_enabled"
+    _KEY_AI_DEPTH_ENABLED = "ai/depth_enabled"
     _KEY_AI_GESTURE_ENABLED = "ai/gesture_enabled"
     _KEY_AI_GESTURE_MODE = "ai/gesture_mode"
     _KEY_AI_RECTANGLE_ENABLED = "ai/rectangle_enabled"
@@ -1278,6 +1279,14 @@ class SettingsDialog(QDialog):
     @staticmethod
     def save_ai_skeleton_enabled(enabled: bool) -> None:
         SettingsDialog._save_bool(SettingsDialog._KEY_AI_SKELETON_ENABLED, enabled)
+
+    @staticmethod
+    def load_ai_depth_enabled() -> bool:
+        return SettingsDialog._load_bool(SettingsDialog._KEY_AI_DEPTH_ENABLED, False)
+
+    @staticmethod
+    def save_ai_depth_enabled(enabled: bool) -> None:
+        SettingsDialog._save_bool(SettingsDialog._KEY_AI_DEPTH_ENABLED, enabled)
 
     @staticmethod
     def load_ai_gesture_enabled() -> bool:

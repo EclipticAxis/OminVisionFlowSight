@@ -56,6 +56,7 @@
 - 🦴 **姿态与手势**：17 点 COCO 人体骨架绘制；基于几何规则的身体姿态手势识别（举手 / 摔倒 / 蹲下 / 双臂展开等），以及基于 MediaPipe Hands 的手部手指手势识别（OK / 点赞 / 数字 1~5 / 握拳等）。
 - 🧢 **头部属性识别**：帽子 / 口罩 / 墨镜 / 眼睛开闭 / 嘴巴开闭五维属性分类。
 - 🌫️ **图像增强**：双边滤波 / NL-Means 去噪预处理，可选 ESPCN x4 小目标超分辨率增强。
+- 🌊 **深度视频（待合并）**：基于 yolo26s-depth 的单目深度估计实时预览，深度图以 Inferno 伪彩整幅替换画面显示；与检测推理互斥（开启时暂停该路检测，关闭即时恢复），默认关闭。注意：模型输出为估计米制深度，并非深度相机的实测精度。详见 [深度视频设计](./docs/depth-video.md)。
 - 🔌 **可扩展流水线（VisionCore）**：模块化 Pipeline / Stage 体系，内置去噪、检测、跟踪、目标状态、重检、事件等阶段，支持插件注册（Plugin Registry）与影子（Shadow）旁路验证，可在不影响主链路的情况下逐步重构。
 - 📡 **事件总线与协议发布**：Qt 信号槽解耦的 EventBus 贯通采集 / 推理 / GUI / 录制线程；支持 JSON / CBOR 序列化，提供 UDP、Console 等适配器将目标状态对外发布。
 - 🖥️ **专业暗色 GUI**：Fusion 风格 + 动画系统的深色主题界面，支持多相机网格布局、启动画面、设置对话框与大量功能开关。
@@ -157,6 +158,9 @@ maturin develop --manifest-path rust\omintrack\Cargo.toml --release
 # 默认参数启动
 python demo.py
 
+# 深度视频：启动后在 AI 功能面板打开“深度视频”开关（默认关闭，
+# 需总 AI 开关同时开启；模型文件 models/yolo26s-depth.pt，详见 docs/depth-video.md）
+
 # 指定摄像头与模型
 python demo.py --camera "HD Webcam" --model models/yolov8n.pt --conf 0.5
 ```
@@ -229,6 +233,7 @@ python tools/check_markdown_fences.py                 # Markdown 围栏配对检
 - **识别运行时**：[MediaPipe Hands 兼容性约束](./docs/mediapipe-hands-compatibility.md)
 - **运行与维护**：[运行时元数据与启动脚本维护](./docs/runtime-maintenance.md)、[Markdown 围栏配对检查](./docs/markdown-fence-check.md)
 - **GUI 与主题**：[squircle 连续曲率圆角](./docs/squircle-capsule-widgets.md)
+- **深度视频**：[单目深度估计实时预览（yolo26s-depth）](./docs/depth-video.md)
 - **性能**：[性能退化分析](./docs/performance-degradation-analysis.md)、[CBOR 基准](./docs/cbor-benchmark.md)
 - **插件与协议**：[插件注册表](./docs/plugin-registry.md)、[状态发布](./docs/state-publisher.md)、[UDP 适配器](./docs/udp-adapter.md)
 
