@@ -384,9 +384,9 @@ class CameraCell(QWidget):
         if changed:
             self.update()
 
-    def _get_depth_palette(self) -> QImage:
+    def _get_depth_palette(self) -> QImage | None:
         if self._depth_range is None:
-            raise ValueError("生成深度色标前必须先设置实际量程")
+            return None
         vmin, vmax = self._depth_range
         key = (self._depth_colormap, vmin, vmax)
         if self._depth_palette is None or self._depth_palette_key != key:
@@ -404,12 +404,27 @@ class CameraCell(QWidget):
             self._depth_palette_key = key
         return self._depth_palette
 
+    @staticmethod
+    def _depth_scale_bar_rect(bounds: QRectF) -> QRectF:
+        """色标宽度随视频区收缩，并为背景面板的左右边距预留空间。"""
+        bar_width = min(
+            180.0,
+            max(0.0, bounds.width() * 0.34),
+            max(0.0, bounds.width() - 12.0),
+        )
+        return QRectF(bounds.right() - bar_width - 6, bounds.bottom() - 18, bar_width, 8)
+
     def _paint_depth_scale(self, painter: QPainter, bounds: QRectF) -> None:
         if not self._depth_mode or self._depth_frame is None or self._depth_range is None:
             return
         vmin, vmax = self._depth_range
-        bar_width = max(80.0, min(180.0, bounds.width() * 0.34))
-        bar_rect = QRectF(bounds.right() - bar_width - 4, bounds.bottom() - 18, bar_width, 8)
+        bar_rect = self._depth_scale_bar_rect(bounds)
+        if bar_rect.width() <= 0 or bounds.height() < 40:
+            return
+        palette = self._get_depth_palette()
+        if palette is None:
+            return
+        bar_width = bar_rect.width()
         panel_rect = QRectF(bar_rect.left() - 6, bar_rect.top() - 19, bar_width + 12, 37)
         painter.save()
         painter.setPen(Qt.PenStyle.NoPen)
@@ -418,9 +433,10 @@ class CameraCell(QWidget):
         painter.setPen(QColor("#E8EEFC"))
         painter.setFont(self._pill_font)
         label_y = bar_rect.top() - 17
-        painter.drawText(QRectF(bar_rect.left(), label_y, 70, 14), Qt.AlignmentFlag.AlignLeft, f"{vmin:.2f} m")
-        painter.drawText(QRectF(bar_rect.right() - 70, label_y, 70, 14), Qt.AlignmentFlag.AlignRight, f"{vmax:.2f} m")
-        painter.drawImage(bar_rect, self._get_depth_palette())
+        label_width = min(70.0, bar_width * 0.5)
+        painter.drawText(QRectF(bar_rect.left(), label_y, label_width, 14), Qt.AlignmentFlag.AlignLeft, f"{vmin:.2f} m")
+        painter.drawText(QRectF(bar_rect.right() - label_width, label_y, label_width, 14), Qt.AlignmentFlag.AlignRight, f"{vmax:.2f} m")
+        painter.drawImage(bar_rect, palette)
         painter.setPen(QPen(QColor(255, 255, 255, 70), 0.7))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(bar_rect)

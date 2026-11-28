@@ -93,8 +93,10 @@ def test_depth_frame_requires_matching_slot_and_enabled_mode(qapp) -> None:
 def test_depth_scale_tracks_range_and_colormap(qapp, monkeypatch) -> None:
     from gui.camera_cell import CameraCell
     from ai.depth_worker import colorize_depth
+    from PyQt6.QtCore import QRectF
 
     cell = CameraCell(0, "camera")
+    assert cell._get_depth_palette() is None  # 量程未就绪时静默跳过，不抛异常
     cell.resize(320, 240)
     cell.set_depth_mode(True)
     cell.update_depth_frame(0, np.zeros((48, 64, 3), dtype=np.uint8))
@@ -132,6 +134,12 @@ def test_depth_scale_tracks_range_and_colormap(qapp, monkeypatch) -> None:
     monkeypatch.setattr(cell, "_paint_depth_scale", capture_bounds)
     _render_center(cell)
     assert captured_bounds[-1] == cell._video_rect_cache  # 锚定视频区而非卡片黑边
+
+    narrow_bounds = QRectF(0, 0, 69.3, 40)
+    narrow_bar = cell._depth_scale_bar_rect(narrow_bounds)
+    assert narrow_bar.left() >= narrow_bounds.left()
+    assert narrow_bar.right() <= narrow_bounds.right()
+    assert narrow_bar.width() < 69.3
 
     cell.update_depth_range(0, 0.0, 3.0)
     changed_palette = cell._get_depth_palette()

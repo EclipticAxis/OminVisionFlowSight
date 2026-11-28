@@ -76,7 +76,7 @@ result.depth.data（米制图）→ resize 到输入尺寸
 | 帧调度 | 每 slot 仅保留最新帧（新帧覆盖旧帧，不排队积压）；多路经 deque 公平轮询；`QMutex`/`QWaitCondition` 唤醒与等待 |
 | 公共接口 | `set_enabled(bool)` / `register(slot)` / `unregister(slot)` / `set_visualization(cmap, range_mode)` / `stop()` |
 | 信号 | 成功时先发 `depth_range_ready(int slot, float vmin, float vmax)` 再发 `depth_ready(int slot, object image)`；per-slot tombstone 代际只影响对应采集位，cmap/量程变化使全部在飞旧帧失效；过期帧不写状态也不发射 |
-| 显示语义 | 深度模式下整幅替换；色标使用当前实际米制量程调用同一 `colorize_depth`，缓存键为 `cmap+vmin+vmax`，逐像素与画面一致；色标锚定 `video_rect` 而非卡片黑边 |
+| 显示语义 | 深度模式下整幅替换；色标使用当前实际米制量程调用同一 `colorize_depth`，缓存键为 `cmap+vmin+vmax`，逐像素与画面一致；色标锚定并随 `video_rect` 宽度收缩，量程未就绪时返回 None 并跳过绘制 |
 | 配置持久化 | `ai/depth_colormap` 默认 `turbo`；`ai/depth_range_mode` 默认 `auto`，与 `ai/depth_enabled` 均通过 QSettings 保存 |
 | 互斥语义 | 深度开启 ⇒ 仅断开该路 `InferWorker.submit_frame`，不注销/重建 tracker，检测框/骨骼/手势均不绘制；关闭深度或总 AI ⇒ 原帧立即恢复，总 AI 仍开时恢复 `InferWorker` |
 | 信号连接 | `_disconnect_all` 循环移除历史重复槽；`_safe_direct_connect` 不使用非法 `UniqueConnection | DirectConnection` 位运算，每次路由先清理再建立至多一条直连；真实 Qt 信号回归测试锁定 |
