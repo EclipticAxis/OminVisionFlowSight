@@ -2,7 +2,7 @@
 
 > **版本**：0.3.0 — 2026-11-28
 > **范围**：`ai/depth_worker.py`、`gui/main_window.py`、`gui/camera_cell.py`、`gui/settings_dialog.py`、`tools/benchmark_depth_video.py`、`tests/`（DepthWorker 52 项 + 显示/路由/错误/色标 10 项 + 侧栏联动 1 项）；模型文件 `models/yolo26s-depth.pt` 为部署依赖
-> **状态**：0.2.0 已合入 main（PR #27 → `876dc07`）；0.3.0 与 PR28 审查修复待合并；63 项相关专项通过，完整套件 1590 项通过、1 项跳过；真实主窗口集成验证通过
+> **状态**：0.3.0 已合入 main（PR #28 → `d4d0111`）；0.2.0 已合入 main（PR #27 → `876dc07`）；63 项相关专项通过，完整套件 1590 项通过、1 项跳过；真实主窗口集成验证通过
 
 ---
 
