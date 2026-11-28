@@ -40,6 +40,8 @@ class SettingsDialog(QDialog):
     _KEY_AI_PERSON_ENABLED = "ai/person_enabled"
     _KEY_AI_SKELETON_ENABLED = "ai/skeleton_enabled"
     _KEY_AI_DEPTH_ENABLED = "ai/depth_enabled"
+    _KEY_AI_DEPTH_COLORMAP = "ai/depth_colormap"
+    _KEY_AI_DEPTH_RANGE_MODE = "ai/depth_range_mode"
     _KEY_AI_GESTURE_ENABLED = "ai/gesture_enabled"
     _KEY_AI_GESTURE_MODE = "ai/gesture_mode"
     _KEY_AI_RECTANGLE_ENABLED = "ai/rectangle_enabled"
@@ -1287,6 +1289,34 @@ class SettingsDialog(QDialog):
     @staticmethod
     def save_ai_depth_enabled(enabled: bool) -> None:
         SettingsDialog._save_bool(SettingsDialog._KEY_AI_DEPTH_ENABLED, enabled)
+
+    @staticmethod
+    def load_ai_depth_colormap() -> str:
+        settings = QSettings(SettingsDialog._SETTINGS_ORG, SettingsDialog._SETTINGS_APP)
+        value = str(settings.value(SettingsDialog._KEY_AI_DEPTH_COLORMAP, "turbo")).lower()
+        return value if value in {"turbo", "inferno", "plasma", "viridis"} else "turbo"
+
+    @staticmethod
+    def save_ai_depth_colormap(cmap: str) -> None:
+        value = str(cmap).lower()
+        if value not in {"turbo", "inferno", "plasma", "viridis"}:
+            value = "turbo"
+        settings = QSettings(SettingsDialog._SETTINGS_ORG, SettingsDialog._SETTINGS_APP)
+        settings.setValue(SettingsDialog._KEY_AI_DEPTH_COLORMAP, value)
+
+    @staticmethod
+    def load_ai_depth_range_mode() -> str:
+        settings = QSettings(SettingsDialog._SETTINGS_ORG, SettingsDialog._SETTINGS_APP)
+        value = str(settings.value(SettingsDialog._KEY_AI_DEPTH_RANGE_MODE, "auto")).lower()
+        return value if value in {"auto", "0-3", "0-8", "0-20"} else "auto"
+
+    @staticmethod
+    def save_ai_depth_range_mode(mode: str) -> None:
+        value = str(mode).lower()
+        if value not in {"auto", "0-3", "0-8", "0-20"}:
+            value = "auto"
+        settings = QSettings(SettingsDialog._SETTINGS_ORG, SettingsDialog._SETTINGS_APP)
+        settings.setValue(SettingsDialog._KEY_AI_DEPTH_RANGE_MODE, value)
 
     @staticmethod
     def load_ai_gesture_enabled() -> bool:

@@ -20,7 +20,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
-from ai.depth_worker import DEFAULT_MODEL_PATH, DepthWorker, colorize_depth
+from ai.depth_worker import (
+    DEFAULT_MODEL_PATH,
+    DepthWorker,
+    colorize_depth,
+    filter_depth_ema,
+    update_adaptive_range,
+)
 from tests._runtime_checks import assert_import_clean
 
 
@@ -89,8 +95,9 @@ def qapp():
 def worker(qapp, monkeypatch):
     """device='cpu' 避免 torch 探测；模型由 _load_model 懒加载（可 monkeypatch）。"""
     w = DepthWorker(model_path=None, imgsz=640, device="cpu")
-    spies = SimpleNamespace(depth=SignalSpy(), error=SignalSpy())
+    spies = SimpleNamespace(depth=SignalSpy(), error=SignalSpy(), range=SignalSpy())
     w.depth_ready.connect(spies.depth, Qt.ConnectionType.DirectConnection)
+    w.depth_range_ready.connect(spies.range, Qt.ConnectionType.DirectConnection)
     w.error_occurred.connect(spies.error, Qt.ConnectionType.DirectConnection)
     yield w, spies
     w.stop(3000)
@@ -123,15 +130,15 @@ def test_colorize_shape_dtype_rgb_contiguous():
     import cv2
 
     depth = np.linspace(0.0, 20.0, 24 * 32, dtype=np.float32).reshape(24, 32)
-    out = colorize_depth(depth, vmin=0.0, vmax=20.0)
+    out = colorize_depth(depth, vmin=0.0, vmax=20.0, mode="metric")
     assert out.shape == (24, 32, 3)
     assert out.dtype == np.uint8
     assert out.flags["C_CONTIGUOUS"]
 
-    # 与手工 BGR→RGB 参考实现逐像素一致（验证确实做了 BGR→RGB）
+    # 默认 Turbo 色带；与手工 BGR→RGB 参考实现逐像素一致（验证确实做了 BGR→RGB）
     gray = np.clip(depth / 20.0, 0, 1)
     gray = (gray * 255.0).round().astype(np.uint8)
-    ref = cv2.cvtColor(cv2.applyColorMap(gray, cv2.COLORMAP_INFERNO), cv2.COLOR_BGR2RGB)
+    ref = cv2.cvtColor(cv2.applyColorMap(gray, cv2.COLORMAP_TURBO), cv2.COLOR_BGR2RGB)
     np.testing.assert_array_equal(out, ref)
 
 
@@ -156,14 +163,30 @@ def test_colorize_nan_inf_map_to_low_end():
     np.testing.assert_array_equal(out[1, 0], low)  # -Inf → 低端
 
 
-def test_colorize_posinf_not_mapped_to_high_end():
-    """+Inf 与 NaN/-Inf 一样映射低值端，而非 vmax 高值端（0-20m Inferno 不变）。"""
+def test_colorize_posinf_maps_to_far_low_end():
+    """无效值映射远处低端；有限近处值才映射近处暖色高端。"""
     low = colorize_depth(np.zeros((1, 1), dtype=np.float32))[0, 0]
-    high = colorize_depth(np.full((1, 1), 20.0, dtype=np.float32))[0, 0]
-    out = colorize_depth(np.array([[np.inf, 20.0]], dtype=np.float32))
+    high = colorize_depth(np.full((1, 1), 1.0, dtype=np.float32))[0, 0]
+    out = colorize_depth(np.array([[np.inf, 1.0]], dtype=np.float32))
     np.testing.assert_array_equal(out[0, 0], low)   # +Inf → 低端
-    np.testing.assert_array_equal(out[0, 1], high)  # 有限 vmax 仍映射高端
+    np.testing.assert_array_equal(out[0, 1], high)  # 近处 → 高端
     assert not np.array_equal(out[0, 0], out[0, 1])
+
+
+def test_disparity_default_near_warm_far_cool_with_gamma():
+    import cv2
+
+    depth = np.array([[1.0, 4.0, 20.0]], dtype=np.float32)
+    out = colorize_depth(depth, vmin=0.0, vmax=20.0, cmap="turbo")
+
+    disparity_far = 1.0 / 20.0
+    disparity_near = 1.0  # 固定 0–20 m 的显示近端 = 5% × 20 = 1 m，避免 1/0 奇点
+    normalized = ((0.25 - disparity_far) / (disparity_near - disparity_far)) ** 0.5
+    gray = np.array([[255, round(float(normalized) * 255), 0]], dtype=np.uint8)
+    expected = cv2.cvtColor(cv2.applyColorMap(gray, cv2.COLORMAP_TURBO), cv2.COLOR_BGR2RGB)
+    np.testing.assert_array_equal(out, expected)
+    with pytest.raises(ValueError):
+        colorize_depth(depth, gamma=0.0)
 
 
 def test_colorize_squeezes_channel_dim_and_rejects_bad_shape():
@@ -304,6 +327,40 @@ def test_disable_after_inference_blocks_emit(worker):
     model.release.set()
     time.sleep(0.3)
     assert spies.depth.count == 0
+
+
+def test_range_change_during_inference_suppresses_stale_frame(worker):
+    """量程切换时，在飞旧帧既不写状态，也不得发给 GUI 造成瞬时闪帧。"""
+    w, spies = worker
+
+    class GatedModel(FakeModel):
+        def __init__(self):
+            super().__init__()
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def predict(self, frame, imgsz, device, verbose):
+            self.started.set()
+            assert self.release.wait(5)
+            return super().predict(frame, imgsz, device, verbose)
+
+    model = GatedModel()
+    install_fake_model(w, model)
+    w.register_slot(0)
+    w.set_enabled(True)
+    w.start()
+    w.submit_frame(0, make_frame(10))
+    assert model.started.wait(5)
+
+    w.set_visualization("turbo", "0-3")
+    model.release.set()
+    time.sleep(0.3)
+    assert spies.depth.count == 0
+    assert spies.range.count == 0
+
+    w.submit_frame(0, make_frame(11))
+    assert wait_until(lambda: spies.depth.count == 1)
+    assert spies.range.calls[-1][1:] == (0.0, 3.0)
 
 
 def test_disable_during_model_load_skips_inference(worker):
@@ -579,3 +636,470 @@ def test_stop_idempotent_and_safe_before_start(qapp):
     assert not w.isRunning()
     w.stop(3000)  # 重复 stop 安全
     assert not w.isRunning()
+
+# ----------------------------------------------------------------------
+# 运动自适应 EMA 滤波（纯函数）
+# ----------------------------------------------------------------------
+
+
+def test_filter_first_frame_uses_current():
+    cur = np.full((4, 4), 5.0, dtype=np.float32)
+    out = filter_depth_ema(None, cur)
+    np.testing.assert_allclose(out, cur)
+    assert out.dtype == np.float32
+
+
+def test_filter_static_flicker_damped():
+    """静态像素 ±0.1m 闪烁（阈值内）被 alpha=0.25 显著衰减。"""
+    base = np.full((8, 8), 5.0, dtype=np.float32)
+    state = filter_depth_ema(None, base)
+    outs = []
+    for i in range(8):
+        cur = base + (0.1 if i % 2 == 0 else -0.1)
+        state = filter_depth_ema(state, cur)
+        outs.append(float(state[0, 0]))
+    # 输入在 4.9/5.1 间跳变（峰峰 0.2），输出峰峰应远小于输入
+    assert max(outs) - min(outs) < 0.05
+    assert 4.9 < min(outs) <= max(outs) < 5.1
+
+
+def test_filter_motion_pixel_fast_follow():
+    """5m 跳变超过阈值 → 运动像素 alpha=0.85 快速跟随。"""
+    prev = np.full((4, 4), 5.0, dtype=np.float32)
+    cur = np.full((4, 4), 10.0, dtype=np.float32)
+    out = filter_depth_ema(prev, cur)
+    np.testing.assert_allclose(out, 5.0 + 0.85 * 5.0, rtol=1e-6)
+
+
+def test_filter_motion_threshold_relative():
+    """相对阈值：20m 处 1m 跳变（阈值 3m）视为静态，alpha=0.25。"""
+    prev = np.full((2, 2), 20.0, dtype=np.float32)
+    cur = np.full((2, 2), 21.0, dtype=np.float32)
+    out = filter_depth_ema(prev, cur)
+    np.testing.assert_allclose(out, 20.0 + 0.25 * 1.0, rtol=1e-6)
+
+
+def test_filter_invalid_and_new_pixels():
+    """当前无效不得沿用旧深度；新出现/上帧无效直接采用当前值。"""
+    prev = np.array([[1.0, np.nan], [3.0, 4.0]], dtype=np.float32)
+    cur = np.array([[np.nan, 2.0], [-1.0, 4.1]], dtype=np.float32)
+    out = filter_depth_ema(prev, cur)
+    assert np.isnan(out[0, 0])  # 当前无效：输出 NaN，不沿用旧深度 1.0
+    assert out[0, 1] == 2.0     # 新出现（上帧无效）→ 直接采用当前值
+    assert np.isnan(out[1, 0])  # cur<=0 视为无效
+    np.testing.assert_allclose(out[1, 1], 4.0 + 0.25 * 0.1, rtol=1e-5)  # 静态 EMA
+
+
+def test_filter_shape_change_resets():
+    prev = np.full((4, 4), 5.0, dtype=np.float32)
+    cur = np.full((2, 8), 7.0, dtype=np.float32)
+    out = filter_depth_ema(prev, cur)
+    np.testing.assert_allclose(out, cur)
+
+
+# ----------------------------------------------------------------------
+# 稳定自适应量程（纯函数）
+# ----------------------------------------------------------------------
+
+
+def test_auto_range_first_frame_uses_target_and_min_span():
+    filtered = np.full((10, 10), 5.0, dtype=np.float32)
+    vmin, vmax = update_adaptive_range(None, filtered)
+    # 恒定深度：目标跨度不足 0.5m，以中点扩到最小量程
+    assert vmin == pytest.approx(5.0 - 0.25)
+    assert vmax == pytest.approx(5.0 + 0.25)
+    assert vmax - vmin >= 0.5
+
+
+def test_auto_range_ignores_outliers():
+    filtered = np.full((100, 100), 5.0, dtype=np.float32)
+    filtered[0, :50] = 100.0  # 0.5% 远距野点，不应支配 98% 百分位
+    vmin, vmax = update_adaptive_range(None, filtered)
+    assert vmax < 10.0
+    assert vmin < vmax
+
+
+def test_auto_range_slow_ema_toward_target():
+    prev = (0.0, 10.0)
+    filtered = np.full((10, 10), 20.0, dtype=np.float32)  # 目标 (19.75, 20.25)
+    vmin, vmax = update_adaptive_range(prev, filtered, alpha=0.05)
+    assert vmin == pytest.approx(0.0 + 0.05 * 19.75)
+    assert vmax == pytest.approx(10.0 + 0.05 * (20.25 - 10.0))
+
+
+def test_auto_range_no_valid_keeps_previous():
+    filtered = np.full((4, 4), np.nan, dtype=np.float32)
+    assert update_adaptive_range((1.0, 2.0), filtered) == (1.0, 2.0)
+    assert update_adaptive_range(None, filtered) == (0.0, 20.0)
+
+
+# ----------------------------------------------------------------------
+# 可视化设置（cmap / range_mode）
+# ----------------------------------------------------------------------
+
+
+def test_colorize_default_cmap_is_turbo():
+    depth = np.linspace(0.0, 20.0, 64, dtype=np.float32).reshape(8, 8)
+    np.testing.assert_array_equal(
+        colorize_depth(depth), colorize_depth(depth, cmap="turbo")
+    )
+    assert not np.array_equal(
+        colorize_depth(depth), colorize_depth(depth, cmap="inferno")
+    )
+
+
+def test_colorize_supported_cmaps_match_cv2_reference():
+    import cv2
+
+    depth = np.linspace(0.0, 20.0, 64, dtype=np.float32).reshape(8, 8)
+    gray = (np.clip(depth / 20.0, 0, 1) * 255.0).round().astype(np.uint8)
+    for name in ("turbo", "inferno", "plasma", "viridis"):
+        out = colorize_depth(depth, cmap=name, mode="metric")
+        ref = cv2.cvtColor(
+            cv2.applyColorMap(gray, getattr(cv2, f"COLORMAP_{name.upper()}")),
+            cv2.COLOR_BGR2RGB,
+        )
+        np.testing.assert_array_equal(out, ref)
+
+
+def test_colorize_unknown_cmap_rejected():
+    with pytest.raises(ValueError):
+        colorize_depth(np.zeros((4, 4), dtype=np.float32), cmap="bogus")
+
+
+def test_visualization_defaults_and_validation(qapp):
+    w = DepthWorker(device="cpu")
+    assert w._cmap == "turbo"
+    assert w._range_mode == "auto"
+    with pytest.raises(ValueError):
+        DepthWorker(device="cpu", cmap="bogus")
+    with pytest.raises(ValueError):
+        DepthWorker(device="cpu", range_mode="0-5")
+    with pytest.raises(ValueError):
+        w.set_visualization("bogus", "auto")
+    with pytest.raises(ValueError):
+        w.set_visualization("turbo", "0-5")
+    # 非法调用不得改变现有设置
+    assert w._cmap == "turbo" and w._range_mode == "auto"
+    for cmap in ("turbo", "inferno", "plasma", "viridis"):
+        for mode in ("auto", "0-3", "0-8", "0-20"):
+            w.set_visualization(cmap, mode)
+    assert w._cmap == "viridis" and w._range_mode == "0-20"
+
+
+# ----------------------------------------------------------------------
+# worker 集成：滤波 / 量程 / 信号
+# ----------------------------------------------------------------------
+
+
+def test_depth_range_ready_emitted_before_depth_ready(worker):
+    w, spies = worker
+    order = SignalSpy()
+    w.depth_range_ready.connect(
+        lambda s, lo, hi: order("range", s, lo, hi), Qt.ConnectionType.DirectConnection
+    )
+    w.depth_ready.connect(
+        lambda s, img: order("depth", s), Qt.ConnectionType.DirectConnection
+    )
+    install_fake_model(w, FakeModel())
+    w.register_slot(0)
+    w.set_enabled(True)
+    w.start()
+    w.submit_frame(0, make_frame(10))
+    assert wait_until(lambda: order.count >= 2)
+    kinds = [c[0] for c in order.calls]
+    assert kinds == ["range", "depth"] * (len(kinds) // 2)
+    # auto 模式恒定深度 10 → 首帧直接采用目标 (9.75, 10.25)
+    slot_id, vmin, vmax = order.calls[0][1], order.calls[0][2], order.calls[0][3]
+    assert slot_id == 0
+    assert vmin == pytest.approx(9.75)
+    assert vmax == pytest.approx(10.25)
+
+
+def test_fixed_range_modes_emit_exact_range(worker):
+    w, spies = worker
+    install_fake_model(w, FakeModel())
+    w.set_visualization("turbo", "0-8")
+    w.register_slot(0)
+    w.set_enabled(True)
+    w.start()
+    w.submit_frame(0, make_frame(10))
+    assert wait_until(lambda: spies.depth.count >= 1)
+    assert spies.range.calls[0] == (0, 0.0, 8.0)  # 固定量程，无平滑
+
+    w.set_visualization("turbo", "0-3")
+    w.submit_frame(0, make_frame(10))
+    assert wait_until(lambda: spies.depth.count >= 2)
+    assert spies.range.calls[-1] == (0, 0.0, 3.0)
+
+
+def test_motion_filter_applied_before_colorize(worker):
+    """固定量程下，跳变帧颜色应对应滤波后的深度（非原始值、非彩色混合）。"""
+    w, spies = worker
+    install_fake_model(w, FakeModel())
+    w.set_visualization("turbo", "0-20")
+    w.register_slot(0)
+    w.set_enabled(True)
+    w.start()
+    w.submit_frame(0, make_frame(10))
+    assert wait_until(lambda: spies.depth.count == 1)
+    w.submit_frame(0, make_frame(16))  # 跳变 6m > 阈值 → alpha=0.85
+    assert wait_until(lambda: spies.depth.count == 2)
+    filtered = filter_depth_ema(
+        np.full((32, 48), 10.0, dtype=np.float32),
+        np.full((32, 48), 16.0, dtype=np.float32),
+    )
+    expected = colorize_depth(filtered, vmin=0.0, vmax=20.0, cmap="turbo")
+    np.testing.assert_array_equal(spies.depth.calls[1][1], expected)
+    raw_next = colorize_depth(
+        np.full((32, 48), 16.0, dtype=np.float32), vmin=0.0, vmax=20.0, cmap="turbo"
+    )
+    assert not np.array_equal(spies.depth.calls[1][1], raw_next)
+
+
+def test_disable_clears_filter_and_range_state(worker):
+    w, spies = worker
+    install_fake_model(w, FakeModel())
+    w.register_slot(0)
+    w.set_enabled(True)
+    w.start()
+    w.submit_frame(0, make_frame(10))
+    assert wait_until(lambda: spies.depth.count >= 1)
+    assert 0 in w._depth_state and 0 in w._range_state
+    w.set_enabled(False)
+    assert w._depth_state == {} and w._range_state == {}
+
+
+def test_unregister_clears_only_that_slot_state(worker):
+    w, spies = worker
+    install_fake_model(w, FakeModel())
+    w.register_slot(0)
+    w.register_slot(1)
+    w.set_enabled(True)
+    w.start()
+    w.submit_frame(0, make_frame(10))
+    w.submit_frame(1, make_frame(12))
+    assert wait_until(lambda: spies.depth.count >= 2)
+    assert 0 in w._depth_state and 1 in w._depth_state
+    w.unregister_slot(0)
+    assert 0 not in w._depth_state and 0 not in w._range_state
+    assert 1 in w._depth_state and 1 in w._range_state  # 其他 slot 状态保留
+
+
+def test_range_mode_switch_clears_range_but_keeps_depth_state(worker):
+    w, spies = worker
+    install_fake_model(w, FakeModel())
+    w.register_slot(0)
+    w.set_enabled(True)
+    w.start()
+    w.submit_frame(0, make_frame(10))
+    assert wait_until(lambda: spies.depth.count >= 1)
+    assert 0 in w._depth_state and 0 in w._range_state
+
+    # cmap 切换：不重置任何状态
+    w.set_visualization("plasma", "auto")
+    assert 0 in w._depth_state and 0 in w._range_state
+
+    # 量程模式切换：清量程状态，保留深度滤波状态
+    w.set_visualization("plasma", "0-3")
+    assert w._range_state == {}
+    assert 0 in w._depth_state
+# ----------------------------------------------------------------------
+# per-slot 代际：unregister / cmap 切换的在飞帧失效语义
+# ----------------------------------------------------------------------
+
+
+class SwitchableGatedModel(FakeModel):
+    """block=True 时 predict 阻塞直到 release；用于确定性地构造在飞帧。"""
+
+    def __init__(self):
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.block = False
+
+    def predict(self, frame, imgsz, device, verbose):
+        if self.block:
+            self.started.set()
+            assert self.release.wait(5)
+        return super().predict(frame, imgsz, device, verbose)
+
+
+def test_unregister_other_slot_keeps_inflight_frame_valid(worker):
+    """slot0 unregister 只使本 slot 在飞帧失效，不得误伤 slot1 的在飞帧。"""
+    w, spies = worker
+    model = SwitchableGatedModel()
+    install_fake_model(w, model)
+    w.register_slot(0)
+    w.register_slot(1)
+    w.set_enabled(True)
+    w.start()
+
+    model.block = True
+    w.submit_frame(1, make_frame(12))
+    assert model.started.wait(5)  # slot1 推理在飞
+
+    w.unregister_slot(0)  # 仅影响 slot0 的代际
+    model.release.set()
+
+    assert wait_until(lambda: spies.depth.count >= 1)
+    assert spies.depth.calls[0][0] == 1  # slot1 在飞帧正常发出
+    assert spies.range.calls[0][0] == 1
+
+
+def test_cmap_switch_invalidates_inflight_frame_and_keeps_filter_state(worker):
+    """cmap 在飞切换：旧色带帧不发出、不写状态；已完成滤波状态保留；下一帧用新色带。"""
+    w, spies = worker
+    model = SwitchableGatedModel()
+    install_fake_model(w, model)
+    w.register_slot(0)
+    w.set_enabled(True)
+    w.start()
+
+    # 第 1 帧完成，建立深度滤波与量程状态
+    w.submit_frame(0, make_frame(10))
+    assert wait_until(lambda: spies.depth.count == 1)
+    assert 0 in w._depth_state
+    assert w._range_state[0] == pytest.approx((9.75, 10.25))
+
+    # 第 2 帧在飞时切换 cmap
+    model.block = True
+    w.submit_frame(0, make_frame(12))
+    assert model.started.wait(5)
+    w.set_visualization("plasma", "auto")
+    # cmap 切换保留已完成的深度滤波与量程状态
+    assert 0 in w._depth_state
+    assert 0 in w._range_state
+    model.release.set()
+    time.sleep(0.3)
+    # 旧色带在飞帧既不发出，其滤波结果也不写入状态
+    assert spies.depth.count == 1
+    np.testing.assert_allclose(
+        w._depth_state[0], np.full((32, 48), 10.0, dtype=np.float32)
+    )
+
+    # 下一帧使用新色带，且基于保留的滤波状态（prev=10，跳变 4m → alpha=0.85）
+    model.block = False
+    w.submit_frame(0, make_frame(14))
+    assert wait_until(lambda: spies.depth.count == 2)
+    filtered = filter_depth_ema(
+        np.full((32, 48), 10.0, dtype=np.float32),
+        np.full((32, 48), 14.0, dtype=np.float32),
+    )
+    vmin, vmax = update_adaptive_range((9.75, 10.25), filtered)
+    expected = colorize_depth(filtered, vmin=vmin, vmax=vmax, cmap="plasma")
+    np.testing.assert_array_equal(spies.depth.calls[1][1], expected)
+    assert spies.range.calls[-1][1] == pytest.approx(vmin)
+    assert spies.range.calls[-1][2] == pytest.approx(vmax)
+    stale = colorize_depth(filtered, vmin=vmin, vmax=vmax, cmap="turbo")
+    assert not np.array_equal(spies.depth.calls[1][1], stale)  # 确为新色带
+
+
+def test_unregister_reregister_same_slot_still_drops_stale_frame(worker):
+    """快速 unregister→register 同 slot：代际 tombstone 保证旧在飞帧仍被丢弃。"""
+    w, spies = worker
+    model = SwitchableGatedModel()
+    install_fake_model(w, model)
+    w.register_slot(0)
+    w.set_enabled(True)
+    w.start()
+
+    model.block = True
+    w.submit_frame(0, make_frame(10))
+    assert model.started.wait(5)  # slot0 推理在飞
+
+    w.unregister_slot(0)
+    w.register_slot(0)  # 立即重新注册（换相机 / 重开场景）
+    model.release.set()
+    time.sleep(0.3)
+    assert spies.depth.count == 0  # 旧帧不得因代际重置而复生
+    assert 0 not in w._depth_state
+
+    model.block = False
+    w.submit_frame(0, make_frame(11))
+    assert wait_until(lambda: spies.depth.count == 1)
+    assert spies.depth.calls[0][0] == 0
+
+
+def test_set_visualization_same_values_is_noop(qapp):
+    """同值 set_visualization 为 no-op：不改设置、不动代际。"""
+    w = DepthWorker(device="cpu")
+    w.register_slot(0)
+    gen_before = dict(w._slot_gen)
+    w.set_visualization("turbo", "auto")  # 与当前默认完全相同
+    assert w._cmap == "turbo" and w._range_mode == "auto"
+    assert dict(w._slot_gen) == gen_before
+
+
+def test_cmap_change_bumps_generations_but_keeps_state(qapp):
+    """cmap 变化递增全部已知 slot 代际（含 tombstone），保留深度/量程状态。"""
+    w = DepthWorker(device="cpu")
+    w.register_slot(0)
+    w.register_slot(1)
+    w.unregister_slot(0)  # slot0 代际 tombstone 为 1
+    w._depth_state[1] = np.full((2, 2), 5.0, dtype=np.float32)
+    w._range_state[1] = (1.0, 2.0)
+
+    w.set_visualization("inferno", "auto")
+    assert w._slot_gen[0] == 2 and w._slot_gen[1] == 1
+    assert 1 in w._depth_state
+    assert w._range_state[1] == (1.0, 2.0)
+
+    # range_mode 变化：清量程状态、保留深度滤波状态、代际继续递增
+    w.set_visualization("inferno", "0-3")
+    assert w._slot_gen[0] == 3 and w._slot_gen[1] == 2
+    assert w._range_state == {}
+    assert 1 in w._depth_state
+
+
+# ----------------------------------------------------------------------
+# disparity 着色优化：与参考公式逐像素一致
+# ----------------------------------------------------------------------
+
+
+def _reference_disparity_colorize(depth, vmin, vmax, cmap="turbo", gamma=0.5):
+    """优化前 disparity 着色参考实现（布尔花式索引版），用于逐像素比对。"""
+    import cv2
+
+    arr = np.asarray(depth, dtype=np.float32)
+    far = float(vmax)
+    near = 0.05 * far if float(vmin) <= 0.0 else float(vmin)
+    valid = np.isfinite(arr) & (arr > 0.0)
+    disparity_far = 1.0 / far
+    disparity_near = 1.0 / near
+    norm = np.zeros_like(arr, dtype=np.float32)
+    disparity = 1.0 / arr[valid]
+    normalized = (disparity - disparity_far) / (disparity_near - disparity_far)
+    norm[valid] = np.power(np.clip(normalized, 0.0, 1.0), gamma)
+    norm = np.nan_to_num(norm, nan=0.0, posinf=0.0, neginf=0.0)
+    gray = (np.clip(norm, 0.0, 1.0) * 255.0).round().astype(np.uint8)
+    bgr = cv2.applyColorMap(gray, getattr(cv2, f"COLORMAP_{cmap.upper()}"))
+    return np.ascontiguousarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), dtype=np.uint8)
+
+
+def test_disparity_colorize_bitexact_vs_reference_formula():
+    """就地优化的 disparity 着色必须与参考公式逐像素一致（含 NaN/±Inf/极端值）。"""
+    rng = np.random.default_rng(20261128)
+    for _ in range(20):
+        shape = (int(rng.integers(4, 64)), int(rng.integers(4, 64)))
+        depth = rng.uniform(0.01, 30.0, size=shape).astype(np.float32)
+        flat = depth.ravel()
+        flat[0] = np.nan
+        flat[1 % flat.size] = np.inf
+        flat[2 % flat.size] = -np.inf
+        flat[3 % flat.size] = 0.0
+        flat[4 % flat.size] = -2.0
+        flat[5 % flat.size] = 1e-38  # 极大 disparity（float32 上溢边界附近）
+        for vmin, vmax in ((0.0, 20.0), (0.0, 3.0), (2.0, 8.0)):
+            out = colorize_depth(depth, vmin=vmin, vmax=vmax, cmap="turbo")
+            ref = _reference_disparity_colorize(depth, vmin, vmax, cmap="turbo")
+            np.testing.assert_array_equal(out, ref)
+    # 全无效 / 全零边界
+    for depth in (
+        np.full((8, 8), np.nan, dtype=np.float32),
+        np.zeros((8, 8), dtype=np.float32),
+        np.full((8, 8), np.inf, dtype=np.float32),
+    ):
+        np.testing.assert_array_equal(
+            colorize_depth(depth), _reference_disparity_colorize(depth, 0.0, 20.0)
+        )

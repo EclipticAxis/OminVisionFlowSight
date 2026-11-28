@@ -128,6 +128,7 @@ class MainWindow(QMainWindow):
         self._grid_layout: QGridLayout | None = None
         self._is_frame_flipped = True
         self._ai_feature_animation: QPropertyAnimation | None = None
+        self._depth_options_animation: QPropertyAnimation | None = None
         self._gesture_options_animation: QPropertyAnimation | None = None
         self._rectangle_options_animation: QPropertyAnimation | None = None
 
@@ -140,6 +141,8 @@ class MainWindow(QMainWindow):
         self._ai_person_enabled = SettingsDialog.load_ai_person_enabled()
         self._ai_skeleton_enabled = SettingsDialog.load_ai_skeleton_enabled()
         self._ai_depth_enabled = SettingsDialog.load_ai_depth_enabled()
+        self._ai_depth_colormap = SettingsDialog.load_ai_depth_colormap()
+        self._ai_depth_range_mode = SettingsDialog.load_ai_depth_range_mode()
         self._ai_gesture_mode = SettingsDialog.load_ai_gesture_mode()
         self._ai_rectangle_enabled = SettingsDialog.load_ai_rectangle_enabled()
         self._ai_rectangle_sensitivity = SettingsDialog.load_ai_rectangle_sensitivity()
@@ -183,7 +186,11 @@ class MainWindow(QMainWindow):
         self._infer_worker.set_rectangle_max_count(self._ai_rectangle_max_count)
         self._infer_worker.set_rectangle_target_color(self._ai_rectangle_target_rgb)
         self._infer_worker.set_rectangle_color_threshold(self._ai_rectangle_color_threshold)
-        self._depth_worker = DepthWorker(parent=self)
+        self._depth_worker = DepthWorker(
+            cmap=self._ai_depth_colormap,
+            range_mode=self._ai_depth_range_mode,
+            parent=self,
+        )
         self._depth_error_notice_ts: dict[int, float] = {}
         self._depth_worker.error_occurred.connect(self._on_depth_error)
 
@@ -191,7 +198,9 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         for slot_id, cell in self._cells.items():
+            cell.set_depth_colormap(self._ai_depth_colormap)
             self._safe_connect(self._depth_worker.depth_ready, cell.update_depth_frame)
+            self._safe_connect(self._depth_worker.depth_range_ready, cell.update_depth_range)
 
         self.setStyleSheet(get_stylesheet())
         self._apply_combo_dark_palette()
@@ -406,6 +415,43 @@ class MainWindow(QMainWindow):
         self._skeleton_toggle = self._create_feature_toggle("人体骨骼绑定", self._ai_skeleton_enabled and self._ai_person_enabled)
         self._depth_toggle = self._create_feature_toggle("深度视频", self._ai_depth_enabled)
         self._depth_toggle.setToolTip("以 yolo26s-depth 彩色深度画面替换原画面；开启时暂停普通检测")
+        self._depth_options_panel = QWidget()
+        self._depth_options_panel.setObjectName("featureRow")
+        self._depth_options_panel.setVisible(False)
+        self._depth_options_panel.setMaximumHeight(0)
+        depth_options_layout = QVBoxLayout(self._depth_options_panel)
+        depth_options_layout.setContentsMargins(4, 0, 4, 0)
+        depth_options_layout.setSpacing(8)
+
+        depth_cmap_layout = QHBoxLayout()
+        depth_cmap_layout.setContentsMargins(0, 0, 0, 0)
+        depth_cmap_label = QLabel("深度色带")
+        depth_cmap_label.setObjectName("featureLabel")
+        depth_cmap_layout.addWidget(depth_cmap_label)
+        self._depth_cmap_combo = WheelFocusComboBox()
+        self._depth_cmap_combo.setObjectName("featureCombo")
+        self._depth_cmap_combo.setToolTip("默认 Turbo：近处红橙、远处蓝紫；倒数深度映射，gamma=0.5")
+        for label, value in (("Turbo", "turbo"), ("Inferno", "inferno"), ("Plasma", "plasma"), ("Viridis", "viridis")):
+            self._depth_cmap_combo.addItem(label, value)
+        self._depth_cmap_combo.setCurrentIndex(max(0, self._depth_cmap_combo.findData(self._ai_depth_colormap)))
+        self._depth_cmap_combo.currentIndexChanged.connect(self._on_depth_visualization_changed)
+        depth_cmap_layout.addWidget(self._depth_cmap_combo, stretch=1)
+        depth_options_layout.addLayout(depth_cmap_layout)
+
+        depth_range_layout = QHBoxLayout()
+        depth_range_layout.setContentsMargins(0, 0, 0, 0)
+        depth_range_label = QLabel("深度量程")
+        depth_range_label.setObjectName("featureLabel")
+        depth_range_layout.addWidget(depth_range_label)
+        self._depth_range_combo = WheelFocusComboBox()
+        self._depth_range_combo.setObjectName("featureCombo")
+        self._depth_range_combo.addItem("自动（稳定）", "auto")
+        for label, value in (("0–3 米", "0-3"), ("0–8 米", "0-8"), ("0–20 米", "0-20")):
+            self._depth_range_combo.addItem(label, value)
+        self._depth_range_combo.setCurrentIndex(max(0, self._depth_range_combo.findData(self._ai_depth_range_mode)))
+        self._depth_range_combo.currentIndexChanged.connect(self._on_depth_visualization_changed)
+        depth_range_layout.addWidget(self._depth_range_combo, stretch=1)
+        depth_options_layout.addLayout(depth_range_layout)
         self._gesture_options_panel = QWidget()
         self._gesture_options_panel.setObjectName("gestureOptionsPanel")
         self._gesture_options_panel.setVisible(False)
@@ -524,6 +570,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._person_toggle)
         layout.addWidget(self._skeleton_toggle)
         layout.addWidget(self._depth_toggle)
+        layout.addWidget(self._depth_options_panel)
         gesture_options_layout.addWidget(self._gesture_mode_row)
         layout.addWidget(self._gesture_options_panel)
         layout.addWidget(self._rectangle_toggle)
@@ -532,6 +579,7 @@ class MainWindow(QMainWindow):
         rectangle_options_layout.addWidget(self._rectangle_color_panel)
         layout.addWidget(self._rectangle_options_panel)
         self._skeleton_toggle.setEnabled(self._ai_person_enabled)
+        self._set_depth_options_visible(self._ai_depth_enabled, animated=False)
         self._set_gesture_options_visible(self._ai_skeleton_enabled and self._ai_person_enabled, animated=False)
         self._set_rectangle_options_visible(self._ai_rectangle_enabled, animated=False)
         return panel
@@ -723,6 +771,8 @@ class MainWindow(QMainWindow):
         combos = list(self._combos.values())
         if hasattr(self, "_gesture_mode_combo"):
             combos.append(self._gesture_mode_combo)
+        if hasattr(self, "_depth_cmap_combo"):
+            combos.extend((self._depth_cmap_combo, self._depth_range_combo))
         if hasattr(self, "_rectangle_sensitivity_combo"):
             combos.append(self._rectangle_sensitivity_combo)
 
@@ -833,6 +883,8 @@ class MainWindow(QMainWindow):
         SettingsDialog.save_ai_person_enabled(self._ai_person_enabled)
         SettingsDialog.save_ai_skeleton_enabled(self._ai_skeleton_enabled)
         SettingsDialog.save_ai_depth_enabled(self._ai_depth_enabled)
+        SettingsDialog.save_ai_depth_colormap(self._ai_depth_colormap)
+        SettingsDialog.save_ai_depth_range_mode(self._ai_depth_range_mode)
         SettingsDialog.save_ai_gesture_mode(self._ai_gesture_mode)
         SettingsDialog.save_ai_rectangle_enabled(self._ai_rectangle_enabled)
         SettingsDialog.save_ai_rectangle_sensitivity(self._ai_rectangle_sensitivity)
@@ -847,6 +899,7 @@ class MainWindow(QMainWindow):
             self._ai_gesture_mode = "off"
 
         self._skeleton_toggle.setEnabled(self._ai_person_enabled)
+        self._set_depth_options_visible(self._ai_depth_enabled, animated=self._ai_feature_panel.isVisible())
         self._set_gesture_options_visible(self._ai_skeleton_enabled and self._ai_person_enabled, animated=self._ai_feature_panel.isVisible())
         self._set_rectangle_options_visible(self._ai_rectangle_enabled, animated=self._ai_feature_panel.isVisible())
         for toggle, value in (
@@ -944,6 +997,16 @@ class MainWindow(QMainWindow):
         self._clear_all_detections()
         self._refresh_dashboard("深度视频：已启用" if checked else "深度视频：已关闭")
 
+    def _on_depth_visualization_changed(self, _index: int = 0) -> None:
+        self._ai_depth_colormap = str(self._depth_cmap_combo.currentData() or "turbo")
+        self._ai_depth_range_mode = str(self._depth_range_combo.currentData() or "auto")
+        SettingsDialog.save_ai_depth_colormap(self._ai_depth_colormap)
+        SettingsDialog.save_ai_depth_range_mode(self._ai_depth_range_mode)
+        self._depth_worker.set_visualization(self._ai_depth_colormap, self._ai_depth_range_mode)
+        for cell in self._cells.values():
+            cell.set_depth_colormap(self._ai_depth_colormap)
+        self._refresh_dashboard("深度显示：色带与量程设置已更新")
+
     def _on_gesture_mode_changed(self, index: int) -> None:
         mode = str(self._gesture_mode_combo.itemData(index) or "off")
         if not (self._ai_person_enabled and self._ai_skeleton_enabled):
@@ -1008,6 +1071,11 @@ class MainWindow(QMainWindow):
     def _set_gesture_options_visible(self, visible: bool, animated: bool = True) -> None:
         self._apply_options_panel_visibility(
             self._gesture_options_panel, "_gesture_options_animation", visible, animated
+        )
+
+    def _set_depth_options_visible(self, visible: bool, animated: bool = True) -> None:
+        self._apply_options_panel_visibility(
+            self._depth_options_panel, "_depth_options_animation", visible, animated
         )
 
     def _set_rectangle_options_visible(self, visible: bool, animated: bool = True) -> None:
@@ -1453,6 +1521,8 @@ class MainWindow(QMainWindow):
             self._person_toggle.blockSignals(True)
             self._skeleton_toggle.blockSignals(True)
             self._depth_toggle.blockSignals(True)
+            self._depth_cmap_combo.blockSignals(True)
+            self._depth_range_combo.blockSignals(True)
             self._gesture_mode_combo.blockSignals(True)
             self._rectangle_toggle.blockSignals(True)
             self._rectangle_max_count_spin.blockSignals(True)
