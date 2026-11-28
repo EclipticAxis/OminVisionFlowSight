@@ -184,6 +184,8 @@ class CameraCell(QWidget):
         self._label_text = label
         self._current_frame: QImage | None = None
         self._current_frame_ts = 0.0
+        self._depth_frame: QImage | None = None
+        self._depth_mode = False
         self._bbox_cache: list[dict] = []
         self._last_detect_time = 0.0
         self._idle_subtext = _NO_SIGNAL_SUBTEXTS[0]
@@ -262,6 +264,7 @@ class CameraCell(QWidget):
     def clear_stream(self) -> None:
         self._current_frame = None
         self._current_frame_ts = 0.0
+        self._depth_frame = None
         self._bbox_cache = []
         self._last_detect_time = 0.0
         self._fps_counter = 0
@@ -321,6 +324,39 @@ class CameraCell(QWidget):
         self._overlay_cache_rect = None
         self._overlay_dirty = True
         self.update()
+
+    def set_depth_mode(self, enabled: bool) -> None:
+        """切换整幅深度画面；原帧继续缓存，关闭后可立即恢复。"""
+        enabled = bool(enabled)
+        if self._depth_mode == enabled:
+            return
+        self._depth_mode = enabled
+        self._depth_frame = None
+        self._bbox_cache = []
+        self._bbox_signature = None
+        self._overlay_cache = None
+        self._overlay_cache_size = None
+        self._overlay_cache_rect = None
+        self._overlay_dirty = True
+        self._video_rect_cache = None
+        self._record_repaint("state")
+        self.update()
+
+    def update_depth_frame(self, slot_id: int, frame: np.ndarray) -> None:
+        """接收 DepthWorker 已着色的 RGB 帧，不经过检测框叠加层。"""
+        if slot_id != self.slot_id or not self._depth_mode:
+            return
+        if frame.ndim != 3 or frame.shape[2] != 3:
+            return
+
+        # QImage 借用 numpy 内存，非连续切片必须先拷贝成连续 RGB 缓冲。
+        frame = np.ascontiguousarray(frame)
+        h, w, _ = frame.shape
+        qimg = QImage(frame.data, w, h, 3 * w, QImage.Format.Format_RGB888)
+        self._depth_frame = qimg.copy()
+        if self._should_repaint():
+            self._record_repaint("frame")
+            self.update()
 
     def _record_repaint(self, reason: str) -> None:
         if reason == "frame":
@@ -419,7 +455,7 @@ class CameraCell(QWidget):
 
     def update_detections(self, slot_id: int, detections: list[dict]) -> None:
         # VisionCore 迁移预留：detections 可标注为 list[CoreDetection]
-        if slot_id != self.slot_id:
+        if slot_id != self.slot_id or self._depth_mode:
             return
 
         source_ts = max((float(det.get("source_ts", 0.0)) for det in detections), default=0.0)
@@ -520,14 +556,19 @@ class CameraCell(QWidget):
         self._paint_card_background(painter, card_rect)
 
         inner_rect = card_rect.adjusted(10, 10, -10, -10)
+        display_frame = (
+            self._depth_frame
+            if self._depth_mode and self._depth_frame is not None
+            else self._current_frame
+        )
         frame_size = (
-            (self._current_frame.width(), self._current_frame.height())
-            if self._current_frame is not None
+            (display_frame.width(), display_frame.height())
+            if display_frame is not None
             else None
         )
         # 缓存命中条件：已有缓存 + 控件未 resize + 帧尺寸未变（分辨率切换也要重建）
         if self._video_rect_cache is None or self._cache_frame_size != frame_size:
-            self._video_rect_cache = self._fit_rect(inner_rect)
+            self._video_rect_cache = self._fit_rect(inner_rect, display_frame)
             self._cache_frame_size = frame_size
             self._overlay_cache = None
             self._overlay_cache_size = None
@@ -535,11 +576,12 @@ class CameraCell(QWidget):
             self._overlay_dirty = True
         video_rect = self._video_rect_cache
 
-        if self._current_frame is None:
+        if display_frame is None:
             self._paint_placeholder(painter, inner_rect)
         else:
-            self._paint_frame(painter, video_rect)
-            self._paint_bboxes(painter, video_rect)
+            self._paint_frame(painter, video_rect, display_frame)
+            if not self._depth_mode:
+                self._paint_bboxes(painter, video_rect)
 
         self._paint_overlay_info(painter, inner_rect)
         painter.end()
@@ -622,12 +664,13 @@ class CameraCell(QWidget):
         self._background_cache_size = size_key
         self._background_cache_rect = rect_key
 
-    def _fit_rect(self, bounds: QRectF) -> QRectF:
-        if self._current_frame is None:
+    def _fit_rect(self, bounds: QRectF, frame: QImage | None = None) -> QRectF:
+        frame = frame or self._current_frame
+        if frame is None:
             return bounds
 
-        frame_w = self._current_frame.width()
-        frame_h = self._current_frame.height()
+        frame_w = frame.width()
+        frame_h = frame.height()
         if frame_w <= 0 or frame_h <= 0:
             return bounds
 
@@ -638,7 +681,15 @@ class CameraCell(QWidget):
         y = bounds.y() + (bounds.height() - draw_h) / 2
         return QRectF(x, y, draw_w, draw_h)
 
-    def _paint_frame(self, painter: QPainter, rect: QRectF) -> None:
+    def _paint_frame(
+        self,
+        painter: QPainter,
+        rect: QRectF,
+        frame: QImage | None = None,
+    ) -> None:
+        frame = frame or self._current_frame
+        if frame is None:
+            return
         clip = QPainterPath()
         clip.addRoundedRect(rect, self._UI_RADIUS, self._UI_RADIUS)
         painter.save()
@@ -646,10 +697,11 @@ class CameraCell(QWidget):
         if self._frame_flipped:
             painter.translate(rect.left() + rect.width(), rect.top())
             painter.scale(-1, 1)
-            painter.drawImage(QRectF(0, 0, rect.width(), rect.height()), self._current_frame)
+            painter.drawImage(QRectF(0, 0, rect.width(), rect.height()), frame)
         else:
-            painter.drawImage(rect, self._current_frame)
-        self._paint_bass_strings(painter, rect)
+            painter.drawImage(rect, frame)
+        if not self._depth_mode:
+            self._paint_bass_strings(painter, rect)
         painter.restore()
 
     def _paint_placeholder(self, painter: QPainter, rect: QRectF) -> None:

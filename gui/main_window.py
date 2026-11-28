@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ai.depth_worker import DepthWorker
 from ai.inference import InferWorker
 from camera.capture import CameraCapture
 from camera.enumerator import CameraInfo, scan_cameras
@@ -85,6 +86,7 @@ def _debug_report(hypothesis_id: str, location: str, msg: str, data: dict) -> No
 class MainWindow(QMainWindow):
 
     _MAX_SLOTS = 4
+    _DEPTH_ERROR_NOTICE_INTERVAL = 1.0
 
     @staticmethod
     def _resolve_special_model_path(path: str) -> str:
@@ -137,6 +139,7 @@ class MainWindow(QMainWindow):
         self._ai_model_path = SettingsDialog.load_ai_model_path()
         self._ai_person_enabled = SettingsDialog.load_ai_person_enabled()
         self._ai_skeleton_enabled = SettingsDialog.load_ai_skeleton_enabled()
+        self._ai_depth_enabled = SettingsDialog.load_ai_depth_enabled()
         self._ai_gesture_mode = SettingsDialog.load_ai_gesture_mode()
         self._ai_rectangle_enabled = SettingsDialog.load_ai_rectangle_enabled()
         self._ai_rectangle_sensitivity = SettingsDialog.load_ai_rectangle_sensitivity()
@@ -180,10 +183,15 @@ class MainWindow(QMainWindow):
         self._infer_worker.set_rectangle_max_count(self._ai_rectangle_max_count)
         self._infer_worker.set_rectangle_target_color(self._ai_rectangle_target_rgb)
         self._infer_worker.set_rectangle_color_threshold(self._ai_rectangle_color_threshold)
+        self._depth_worker = DepthWorker(parent=self)
+        self._depth_error_notice_ts: dict[int, float] = {}
+        self._depth_worker.error_occurred.connect(self._on_depth_error)
 
         self._camera_list = scan_cameras()
 
         self._build_ui()
+        for slot_id, cell in self._cells.items():
+            self._safe_connect(self._depth_worker.depth_ready, cell.update_depth_frame)
 
         self.setStyleSheet(get_stylesheet())
         self._apply_combo_dark_palette()
@@ -396,6 +404,8 @@ class MainWindow(QMainWindow):
 
         self._person_toggle = self._create_feature_toggle("人体识别", self._ai_person_enabled)
         self._skeleton_toggle = self._create_feature_toggle("人体骨骼绑定", self._ai_skeleton_enabled and self._ai_person_enabled)
+        self._depth_toggle = self._create_feature_toggle("深度视频", self._ai_depth_enabled)
+        self._depth_toggle.setToolTip("以 yolo26s-depth 彩色深度画面替换原画面；开启时暂停普通检测")
         self._gesture_options_panel = QWidget()
         self._gesture_options_panel.setObjectName("gestureOptionsPanel")
         self._gesture_options_panel.setVisible(False)
@@ -508,10 +518,12 @@ class MainWindow(QMainWindow):
 
         self._person_toggle.toggled.connect(self._on_person_feature_toggled)
         self._skeleton_toggle.toggled.connect(self._on_skeleton_feature_toggled)
+        self._depth_toggle.toggled.connect(self._on_depth_feature_toggled)
         self._rectangle_toggle.toggled.connect(self._on_rectangle_feature_toggled)
 
         layout.addWidget(self._person_toggle)
         layout.addWidget(self._skeleton_toggle)
+        layout.addWidget(self._depth_toggle)
         gesture_options_layout.addWidget(self._gesture_mode_row)
         layout.addWidget(self._gesture_options_panel)
         layout.addWidget(self._rectangle_toggle)
@@ -820,6 +832,7 @@ class MainWindow(QMainWindow):
     def _save_feature_flags(self) -> None:
         SettingsDialog.save_ai_person_enabled(self._ai_person_enabled)
         SettingsDialog.save_ai_skeleton_enabled(self._ai_skeleton_enabled)
+        SettingsDialog.save_ai_depth_enabled(self._ai_depth_enabled)
         SettingsDialog.save_ai_gesture_mode(self._ai_gesture_mode)
         SettingsDialog.save_ai_rectangle_enabled(self._ai_rectangle_enabled)
         SettingsDialog.save_ai_rectangle_sensitivity(self._ai_rectangle_sensitivity)
@@ -839,6 +852,7 @@ class MainWindow(QMainWindow):
         for toggle, value in (
             (self._person_toggle, self._ai_person_enabled),
             (self._skeleton_toggle, self._ai_skeleton_enabled),
+            (self._depth_toggle, self._ai_depth_enabled),
             (self._rectangle_toggle, self._ai_rectangle_enabled),
         ):
             toggle.blockSignals(True)
@@ -862,6 +876,53 @@ class MainWindow(QMainWindow):
         if save:
             self._save_feature_flags()
         self._apply_feature_flags_to_worker()
+        self._apply_depth_state()
+
+    def _apply_depth_state(self) -> None:
+        """同步深度显示与推理路由，保留检测 tracker 及其运行时状态。"""
+        active = self._is_ai_enabled and self._ai_depth_enabled
+        for cell in self._cells.values():
+            cell.set_depth_mode(active)
+
+        for slot_id, worker in self._camera_capture.get_all_workers():
+            # 先清掉两个候选槽的全部历史连接，再按目标状态建立一个连接。
+            # 不得 unregister InferWorker：深度预览只是暂停提交，不重置 tracker。
+            self._disconnect_all(worker.frame_ready, self._infer_worker.submit_frame)
+            self._disconnect_all(worker.frame_ready, self._depth_worker.submit_frame)
+            if active:
+                self._cells[slot_id].update_detections(slot_id, [])
+                self._depth_worker.register_slot(slot_id)
+                self._safe_direct_connect(worker.frame_ready, self._depth_worker.submit_frame)
+            else:
+                self._depth_worker.unregister_slot(slot_id)
+                if self._is_ai_enabled:
+                    # 深度切换本身保留槽位；仅总 AI 曾关闭后需要重新注册。
+                    self._infer_worker.register_slot(slot_id)
+                    self._safe_direct_connect(worker.frame_ready, self._infer_worker.submit_frame)
+
+        self._depth_worker.set_enabled(active)
+        if active and not self._depth_worker.isRunning():
+            self._depth_worker.start()
+
+    def _on_depth_error(self, slot_id: int, message: str) -> None:
+        """模型级错误回退原画面；单帧错误由 worker 丢弃并继续后续帧。"""
+        if slot_id >= 0:
+            logging.warning("DepthWorker transient error (slot=%d): %s", slot_id, message)
+            if self._is_ai_enabled and self._ai_depth_enabled:
+                now = time.monotonic()
+                last_notice = self._depth_error_notice_ts.get(slot_id, 0.0)
+                if now - last_notice >= self._DEPTH_ERROR_NOTICE_INTERVAL:
+                    self._depth_error_notice_ts[slot_id] = now
+                    self._refresh_dashboard(f"深度帧已跳过（采集位 {slot_id + 1}）：{message}")
+            return
+
+        logging.error("DepthWorker model error: %s", message)
+        if not (self._is_ai_enabled and self._ai_depth_enabled):
+            return  # 已停用后的 queued 旧错误不得改写用户开关。
+        self._ai_depth_enabled = False
+        self._sync_feature_toggle_states()
+        self._clear_all_detections()
+        self._refresh_dashboard(f"深度视频已回退原画面：{message}")
 
     def _on_person_feature_toggled(self, checked: bool) -> None:
         self._ai_person_enabled = checked
@@ -876,6 +937,12 @@ class MainWindow(QMainWindow):
         self._sync_feature_toggle_states()
         self._clear_all_detections()
         self._refresh_dashboard("骨骼绑定：已启用" if self._ai_skeleton_enabled else "骨骼绑定：已关闭")
+
+    def _on_depth_feature_toggled(self, checked: bool) -> None:
+        self._ai_depth_enabled = checked
+        self._sync_feature_toggle_states()
+        self._clear_all_detections()
+        self._refresh_dashboard("深度视频：已启用" if checked else "深度视频：已关闭")
 
     def _on_gesture_mode_changed(self, index: int) -> None:
         mode = str(self._gesture_mode_combo.itemData(index) or "off")
@@ -1057,7 +1124,17 @@ class MainWindow(QMainWindow):
             cell.update_detections(slot_id, [])
 
     @staticmethod
+    def _disconnect_all(signal, slot) -> None:
+        """移除同一槽的全部历史连接；PyQt disconnect 每次只移除一条。"""
+        while True:
+            try:
+                signal.disconnect(slot)
+            except TypeError:
+                return
+
+    @staticmethod
     def _safe_connect(signal, slot) -> None:
+        MainWindow._disconnect_all(signal, slot)
         try:
             signal.connect(slot, Qt.ConnectionType.UniqueConnection)
         except TypeError:
@@ -1068,13 +1145,13 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _safe_direct_connect(signal, slot) -> None:
+        # PyQt6 的 ConnectionType 不是 Flag，不能用 | 组合 Unique/Direct。
+        # 显式清理后再直连，才能在所有支持版本中保证单连接。
+        MainWindow._disconnect_all(signal, slot)
         try:
-            signal.connect(slot, Qt.ConnectionType.UniqueConnection | Qt.ConnectionType.DirectConnection)
+            signal.connect(slot, Qt.ConnectionType.DirectConnection)
         except TypeError:
-            try:
-                signal.connect(slot, Qt.ConnectionType.DirectConnection)
-            except TypeError:
-                pass
+            pass
 
     def _on_camera_selected(self, slot_id: int, combo_index: int) -> None:
         device_name = self._combos[slot_id].itemData(combo_index)
@@ -1084,6 +1161,7 @@ class MainWindow(QMainWindow):
                 self._restore_camera_grid()
             self._camera_capture.stop_camera(slot_id)
             self._infer_worker.unregister_slot(slot_id)
+            self._depth_worker.unregister_slot(slot_id)
             self._cells[slot_id].clear_stream()
             self._refresh_dashboard(f"采集位 {slot_id + 1}：已断开")
             return
@@ -1091,6 +1169,7 @@ class MainWindow(QMainWindow):
         self._camera_capture.stop_camera(slot_id)
         self._cells[slot_id].clear_stream()
         self._infer_worker.register_slot(slot_id)
+        self._depth_worker.unregister_slot(slot_id)
         self._camera_capture.start_camera(slot_id, device_name)
 
         worker = self._camera_capture.get_worker(slot_id)
@@ -1121,6 +1200,7 @@ class MainWindow(QMainWindow):
                 self._video_recorder.start_record(slot_id, path)
                 self._safe_connect(worker.frame_ready, self._on_frame_for_recording)
 
+        self._apply_depth_state()
         self._refresh_dashboard(f"采集位 {slot_id + 1}：{device_name}")
 
     def _on_ai_toggled(self, checked: bool) -> None:
@@ -1140,17 +1220,15 @@ class MainWindow(QMainWindow):
                 self._infer_worker.register_slot(slot_id)
                 self._safe_connect(self._infer_worker.detection_ready, self._cells[slot_id].update_detections)
             else:
-                try:
-                    worker.frame_ready.disconnect(self._infer_worker.submit_frame)
-                except TypeError:
-                    pass
+                self._disconnect_all(worker.frame_ready, self._infer_worker.submit_frame)
                 self._infer_worker.unregister_slot(slot_id)
-                try:
-                    self._infer_worker.detection_ready.disconnect(self._cells[slot_id].update_detections)
-                except TypeError:
-                    pass
+                self._disconnect_all(
+                    self._infer_worker.detection_ready,
+                    self._cells[slot_id].update_detections,
+                )
                 self._cells[slot_id].update_detections(slot_id, [])
 
+        self._apply_depth_state()
         state_text = "预热中" if checked else "已禁用"
         self._refresh_dashboard(f"AI 检测：{state_text}")
         if checked:
@@ -1361,6 +1439,12 @@ class MainWindow(QMainWindow):
             logging.error("Error stopping InferWorker: %s", err)
 
         try:
+            self._depth_worker.stop(wait_ms=30000)
+            logging.info("DepthWorker stopped")
+        except Exception as err:
+            logging.error("Error stopping DepthWorker: %s", err)
+
+        try:
             for cell in self._cells.values():
                 cell.blockSignals(True)
             for combo in self._combos.values():
@@ -1368,6 +1452,7 @@ class MainWindow(QMainWindow):
             self._ai_toggle.blockSignals(True)
             self._person_toggle.blockSignals(True)
             self._skeleton_toggle.blockSignals(True)
+            self._depth_toggle.blockSignals(True)
             self._gesture_mode_combo.blockSignals(True)
             self._rectangle_toggle.blockSignals(True)
             self._rectangle_max_count_spin.blockSignals(True)

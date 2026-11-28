@@ -97,6 +97,7 @@ VisionBata（内部代号 VisionDataPlatform，简称 VDP）是一个**桌面级
 | **ReID** | OSNet-x0.25 行人重识别（256×128→512 维 embedding，匹配外观加权 0.4；mock 止损门控） | ✅ 完整 | PINTO0309 OSNet ONNX |
 | **去噪** | 双边滤波 / NL-Means 预处理 | ✅ 完整 | OpenCV |
 | **超分辨率** | ESPCN x4 小目标增强 | ✅ 完整（可选） | cv2.dnn_superres |
+| **深度** | 单目深度估计实时预览（yolo26s-depth，Inferno 伪彩，与检测互斥） | 🚧 待合并 | ultralytics |
 | **录像** | H.264 MP4 多路同时录制 | ✅ 完整 | PyAV |
 | **GUI** | 暗色主题 Fusion 风格 + 动画系统 | ✅ 完整 | PyQt6 |
 
@@ -109,6 +110,7 @@ VisionBata（内部代号 VisionDataPlatform，简称 VDP）是一个**桌面级
 - 滤波器类型选择
 - ROI 重检测参数
 - 头部属性分类
+- 深度视频预览（与检测推理互斥，[设计](docs/depth-video.md)）
 
 ---
 
@@ -824,6 +826,7 @@ pip install -r requirements.txt
 | `models/chc_s_wo_fiqa.onnx` | 可选 | 头部属性分类 |
 | `models/osnet_x0_25_256x128_msmt17.onnx` | 可选 | OSNet-x0.25 行人重识别（ReID） |
 | `models/ESPCN_x4.pb` | 可选 | 超分辨率模型 |
+| `models/yolo26s-depth.pt` | 可选 | 单目深度估计（深度视频，[设计](docs/depth-video.md)） |
 
 ### 10.3 启动流程
 
@@ -914,6 +917,7 @@ MainWindow.closeEvent()
 | 2026-11-27 | PR #22 复核四点闭环：[设计](docs/tracker-nsa-ocm-hmiou.md) 0.2.0 §4.2（12.1 stride-4 IDSW 回归（DanceTrack 6730→7020、MOT17 1371→1390）补归因与取舍说明，触发 §6 门槛已书面解释，ID 敏感场景建议 stride≥4 关 OCM；12.2 修正 PROJECT_BIBLE 夸大声明——revision/iou_threshold 此前未入报告，现已真正实现；12.3 修正 evaluate revision 逻辑：报告记执行时 HEAD 不再被基线 summary 污染，另存 tracker_revisions 溯源各 run，重出 v2 报告；12.4 如实披露 OCM 在 MOT17 仍轻微负收益（ukf 0.4152→0.4142、auto 0.4270→0.4261），低速场景方向约束区分度低） | ✅ 已合入 main（PR #23 → `5a62600`） |
 | 2026-11-27 | PR#22 复核元数据闭环（15.1–15.3）：[方案](docs/tracking-quality-benchmark.md) 0.2.2 + [设计](docs/tracker-nsa-ocm-hmiou.md) 0.2.0（git_revision 工作区脏指纹（代码路径、排除 results/模型/数据产物）；报告 report_schema_version=2 + §4 字段定义（revision=执行时 HEAD / tracker_revisions=各 run 产出代码）；iou_threshold 收为 per-tracker 集合+不一致告警；全部落盘报告在干净 commit 816a1c2 上重跑重出为 schema v2，tracker_revisions pin 真实修复代码、数字与初版逐位一致；M0 基线语料统一） | ✅ 已合入 main（PR #25 → `f9cd0d4`） |
 | 2026-11-27 | 跟踪增强批次 3 ORU/OCR/TCM：[设计](docs/tracker-oru-ocr-tcm.md) 0.2.0（ORU 丢失恢复回滚重放纠外推漂移；OCR 用最后观测二次关联（先于 ROI 重检测）；TCM 置信度一致性奖励（第一阶段，二阶段不加）；三特性默认全关 opt-in，默认路径 golden 未变；Python/Rust 同步 + release 重建，新增 16 项测试，全套件 1524 项通过；对照：stride1 边际改进（DanceTrack IDSW 7982→7822、MOT17 1064→1028），stride4 全特性最优（DanceTrack HOTA 0.2337/IDSW 6261）并消解批次1+2 遗留的 stride4 IDSW 回归；结论：跟踪收益趋缓，下一数量级提升靠检测器升级；含 PR#26 审查修复：P0-1 Rust last_observation 漏 ocr_enabled 致 OCR 单开双端发散（已修+对拍）、P1-1 OCR scipy 回退排序方向、P1-2 删 TCM 死代码、P1-3 报告落 tracker_flags、P1-4 IDSW 上升逐条披露、P2 文档状态头/顺序/rust-tracker-core 登记/双后端对拍一致；全套件 1527 通过；复核 N-1 双后端逐位一致措辞修正（3/4 逐位一致、MOT17 auto HOTA 差 ~1.4e-6 系 AUTO 阈值放大浮点噪声，限定仅在 ukf 成立） + N-2 删写-only 死状态 tcm_conf_prev（双端） + N-3 设计文档版本 0.2.0） | ✅ 已合入 main（PR #26 → `9d7c27c`） |
+| 2026-11-28 | 深度视频（yolo26s-depth 单目深度估计）：[设计](docs/depth-video.md) 0.2.0（独立 DepthWorker 懒加载、多路最新帧公平轮询；固定 0–20 m Inferno 整幅替换；PR27 审查修复：真实 Qt 信号先全量断开再单连接、深度切换只暂停提交并保留 tracker/track ID、错误计数统一加锁、NaN/±Inf 低端映射、非连续帧防护、dashboard 时间窗节流、parent + 协作式停止；33 项深度专项通过，完整套件 1560 项通过、1 项跳过） | 🚧 工作区已实现，待合并 |
 
 ### 11.3 已知问题
 
@@ -1092,6 +1096,7 @@ if _is_mynew_model(path):
 | `tools/check_markdown_fences.py` | 按需 | Markdown 围栏配对检查（pytest 守护与 CI markdown-fences 同源，契约见 [markdown-fence-check](docs/markdown-fence-check.md)） |
 | `ai/detection.py` | ✅ | **核心**：Detection/Keypoint 数据模型 |
 | `ai/model_task.py` | ✅ | ModelTask 枚举 |
+| `ai/depth_worker.py` | 按需 | 深度视频工作线程（懒加载 yolo26s-depth，契约见 [depth-video](docs/depth-video.md) §3） |
 | `gui/main_window.py` | ✅ | 主窗口 + 信号槽调度 |
 | `gui/camera_cell.py` | 推荐 | 画面显示 + 叠加绘制 |
 | `gui/settings_dialog.py` | 推荐 | 配置对话框 + QSettings 键 |
@@ -1120,6 +1125,7 @@ if _is_mynew_model(path):
 | 修改检测框绘制 | `gui/camera_cell.py::_rebuild_overlay_cache` | QPainter 绘制逻辑；叠加 chip 走矢量 squircle 路径 |
 | 调整配置项 | `gui/settings_dialog.py::__init__` | QSettings 键 + 控件创建 |
 | 添加手势 | `ai/gesture_recognizer.py::detect` | 17 点关键点的几何规则 |
+| 调整深度视频 | `ai/depth_worker.py` + `gui/main_window.py` 深度开关槽 | 暂停提交保留 tracker、真实 Qt 单连接、错误回退；契约见 [depth-video](docs/depth-video.md) §3–§4 |
 
 ### 16.4 关键设计决策
 
