@@ -152,7 +152,18 @@ def test_colorize_nan_inf_map_to_low_end():
     assert out.shape == (2, 2, 3)
     low = colorize_depth(np.zeros((1, 1), dtype=np.float32))[0, 0]
     np.testing.assert_array_equal(out[0, 0], low)  # NaN → 低端
+    np.testing.assert_array_equal(out[0, 1], low)  # +Inf → 低端
     np.testing.assert_array_equal(out[1, 0], low)  # -Inf → 低端
+
+
+def test_colorize_posinf_not_mapped_to_high_end():
+    """+Inf 与 NaN/-Inf 一样映射低值端，而非 vmax 高值端（0-20m Inferno 不变）。"""
+    low = colorize_depth(np.zeros((1, 1), dtype=np.float32))[0, 0]
+    high = colorize_depth(np.full((1, 1), 20.0, dtype=np.float32))[0, 0]
+    out = colorize_depth(np.array([[np.inf, 20.0]], dtype=np.float32))
+    np.testing.assert_array_equal(out[0, 0], low)   # +Inf → 低端
+    np.testing.assert_array_equal(out[0, 1], high)  # 有限 vmax 仍映射高端
+    assert not np.array_equal(out[0, 0], out[0, 1])
 
 
 def test_colorize_squeezes_channel_dim_and_rejects_bad_shape():
@@ -436,6 +447,119 @@ def test_inference_error_emits_slot_error_then_continues(worker):
 
     w.submit_frame(0, make_frame(10))  # 第 2 帧成功，线程未被拖死
     assert wait_until(lambda: spies.depth.count >= 1)
+
+
+def test_infer_error_throttled_first_and_every_30(worker):
+    """连续失败节流：第 1 次及每第 30 次上报，其余只计数不上报。"""
+    w, spies = worker
+
+    class AlwaysFailModel(FakeModel):
+        def predict(self, frame, imgsz, device, verbose):
+            self.calls.append({})
+            raise RuntimeError("boom-throttle")
+
+    model = AlwaysFailModel()
+    install_fake_model(w, model)
+    w.register_slot(0)
+    w.set_enabled(True)
+    w.start()
+    for i in range(31):
+        w.submit_frame(0, make_frame(10))
+        # 等本帧真正进入 predict 后再提交下一帧，避免覆盖式 pending 丢帧
+        assert wait_until(lambda n=i + 1: len(model.calls) >= n)
+    # 第 1、30 次上报 → 共 2 次；31 帧全部失败
+    assert len(model.calls) == 31
+    assert spies.error.count == 2
+    assert spies.depth.count == 0
+
+
+def test_infer_error_count_resets_after_success(worker):
+    """成功一次后连续失败计数清零：再次失败重新按“首次”上报。"""
+    w, spies = worker
+
+    class FlakyModel(FakeModel):
+        def __init__(self):
+            super().__init__()
+            self.fail_next = True
+
+        def predict(self, frame, imgsz, device, verbose):
+            if self.fail_next:
+                self.fail_next = False
+                self.calls.append({})
+                raise RuntimeError("boom-reset")
+            return super().predict(frame, imgsz, device, verbose)
+
+    model = FlakyModel()
+    install_fake_model(w, model)
+    w.register_slot(0)
+    w.set_enabled(True)
+    w.start()
+    w.submit_frame(0, make_frame(10))  # 失败 → 第 1 次必报
+    assert wait_until(lambda: spies.error.count == 1)
+    w.submit_frame(0, make_frame(10))  # 成功 → 计数清零
+    assert wait_until(lambda: spies.depth.count == 1)
+    model.fail_next = True
+    w.submit_frame(0, make_frame(10))  # 再次失败 → 重新按首次上报
+    assert wait_until(lambda: spies.error.count == 2)
+
+
+def test_infer_error_count_cleared_on_unregister(worker):
+    """unregister_slot 清空该 slot 的失败计数：重新注册后再次失败按首次上报。"""
+    w, spies = worker
+
+    class AlwaysFailModel(FakeModel):
+        def predict(self, frame, imgsz, device, verbose):
+            self.calls.append({})
+            raise RuntimeError("boom-unregister")
+
+    model = AlwaysFailModel()
+    install_fake_model(w, model)
+    w.register_slot(0)
+    w.set_enabled(True)
+    w.start()
+    w.submit_frame(0, make_frame(10))
+    assert wait_until(lambda: spies.error.count == 1)
+    assert wait_until(lambda: len(model.calls) == 1)
+
+    w.unregister_slot(0)
+    assert w._infer_error_counts == {}  # 计数随 unregister 清零
+
+    w.register_slot(0)
+    w.submit_frame(0, make_frame(10))
+    assert wait_until(lambda: spies.error.count == 2)  # 重新按首次上报
+
+
+def test_stop_cooperative_with_inflight_inference(worker):
+    """stop 期间有在飞推理：不 terminate，推理完成后协作退出且不再发帧。"""
+    w, spies = worker
+
+    class GatedModel(FakeModel):
+        def __init__(self):
+            super().__init__()
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def predict(self, frame, imgsz, device, verbose):
+            self.started.set()
+            assert self.release.wait(5)
+            return super().predict(frame, imgsz, device, verbose)
+
+    model = GatedModel()
+    install_fake_model(w, model)
+    w.register_slot(0)
+    w.set_enabled(True)
+    w.start()
+    w.submit_frame(0, make_frame(10))
+    assert model.started.wait(5)  # 推理在飞
+
+    stopper = threading.Thread(target=w.stop, args=(3000,))
+    stopper.start()
+    time.sleep(0.1)  # 让 stop 先置 _running=False 并进入 wait
+    model.release.set()
+    stopper.join(5)
+    assert not stopper.is_alive()
+    assert not w.isRunning()
+    assert spies.depth.count == 0  # 停止后即使推理完成也不发新深度帧
 
 
 # ----------------------------------------------------------------------

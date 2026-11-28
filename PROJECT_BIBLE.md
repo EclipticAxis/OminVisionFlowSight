@@ -917,7 +917,7 @@ MainWindow.closeEvent()
 | 2026-11-27 | PR #22 复核四点闭环：[设计](docs/tracker-nsa-ocm-hmiou.md) 0.2.0 §4.2（12.1 stride-4 IDSW 回归（DanceTrack 6730→7020、MOT17 1371→1390）补归因与取舍说明，触发 §6 门槛已书面解释，ID 敏感场景建议 stride≥4 关 OCM；12.2 修正 PROJECT_BIBLE 夸大声明——revision/iou_threshold 此前未入报告，现已真正实现；12.3 修正 evaluate revision 逻辑：报告记执行时 HEAD 不再被基线 summary 污染，另存 tracker_revisions 溯源各 run，重出 v2 报告；12.4 如实披露 OCM 在 MOT17 仍轻微负收益（ukf 0.4152→0.4142、auto 0.4270→0.4261），低速场景方向约束区分度低） | ✅ 已合入 main（PR #23 → `5a62600`） |
 | 2026-11-27 | PR#22 复核元数据闭环（15.1–15.3）：[方案](docs/tracking-quality-benchmark.md) 0.2.2 + [设计](docs/tracker-nsa-ocm-hmiou.md) 0.2.0（git_revision 工作区脏指纹（代码路径、排除 results/模型/数据产物）；报告 report_schema_version=2 + §4 字段定义（revision=执行时 HEAD / tracker_revisions=各 run 产出代码）；iou_threshold 收为 per-tracker 集合+不一致告警；全部落盘报告在干净 commit 816a1c2 上重跑重出为 schema v2，tracker_revisions pin 真实修复代码、数字与初版逐位一致；M0 基线语料统一） | ✅ 已合入 main（PR #25 → `f9cd0d4`） |
 | 2026-11-27 | 跟踪增强批次 3 ORU/OCR/TCM：[设计](docs/tracker-oru-ocr-tcm.md) 0.2.0（ORU 丢失恢复回滚重放纠外推漂移；OCR 用最后观测二次关联（先于 ROI 重检测）；TCM 置信度一致性奖励（第一阶段，二阶段不加）；三特性默认全关 opt-in，默认路径 golden 未变；Python/Rust 同步 + release 重建，新增 16 项测试，全套件 1524 项通过；对照：stride1 边际改进（DanceTrack IDSW 7982→7822、MOT17 1064→1028），stride4 全特性最优（DanceTrack HOTA 0.2337/IDSW 6261）并消解批次1+2 遗留的 stride4 IDSW 回归；结论：跟踪收益趋缓，下一数量级提升靠检测器升级；含 PR#26 审查修复：P0-1 Rust last_observation 漏 ocr_enabled 致 OCR 单开双端发散（已修+对拍）、P1-1 OCR scipy 回退排序方向、P1-2 删 TCM 死代码、P1-3 报告落 tracker_flags、P1-4 IDSW 上升逐条披露、P2 文档状态头/顺序/rust-tracker-core 登记/双后端对拍一致；全套件 1527 通过；复核 N-1 双后端逐位一致措辞修正（3/4 逐位一致、MOT17 auto HOTA 差 ~1.4e-6 系 AUTO 阈值放大浮点噪声，限定仅在 ukf 成立） + N-2 删写-only 死状态 tcm_conf_prev（双端） + N-3 设计文档版本 0.2.0） | ✅ 已合入 main（PR #26 → `9d7c27c`） |
-| 2026-11-28 | 深度视频（yolo26s-depth 单目深度估计）：[设计](docs/depth-video.md) 0.1.0（新增 `ai/depth_worker.py` DepthWorker 懒加载单模型多路共享、每 slot 最新帧覆盖 + deque 公平轮询；固定 0–20 m metric + Inferno 伪彩整幅替换显示；深度/检测互斥：开启暂停该路 InferWorker，关闭即时恢复；模型错误自动回退、单帧错误跳帧续跑；真实 ASUS FHD webcam 首帧后实测约 30.3fps；27 项深度专项通过，完整套件 1554 项通过、1 项跳过；真实主窗口集成验证通过） | 🚧 工作区已实现，待合并 |
+| 2026-11-28 | 深度视频（yolo26s-depth 单目深度估计）：[设计](docs/depth-video.md) 0.2.0（独立 DepthWorker 懒加载、多路最新帧公平轮询；固定 0–20 m Inferno 整幅替换；PR27 审查修复：真实 Qt 信号先全量断开再单连接、深度切换只暂停提交并保留 tracker/track ID、错误计数统一加锁、NaN/±Inf 低端映射、非连续帧防护、dashboard 时间窗节流、parent + 协作式停止；33 项深度专项通过，完整套件 1560 项通过、1 项跳过） | 🚧 工作区已实现，待合并 |
 
 ### 11.3 已知问题
 
@@ -1125,7 +1125,7 @@ if _is_mynew_model(path):
 | 修改检测框绘制 | `gui/camera_cell.py::_rebuild_overlay_cache` | QPainter 绘制逻辑；叠加 chip 走矢量 squircle 路径 |
 | 调整配置项 | `gui/settings_dialog.py::__init__` | QSettings 键 + 控件创建 |
 | 添加手势 | `ai/gesture_recognizer.py::detect` | 17 点关键点的几何规则 |
-| 调整深度视频 | `ai/depth_worker.py` + `gui/main_window.py` 深度开关槽 | 深度/检测互斥三不变式、错误回退；契约见 [depth-video](docs/depth-video.md) §3–§4 |
+| 调整深度视频 | `ai/depth_worker.py` + `gui/main_window.py` 深度开关槽 | 暂停提交保留 tracker、真实 Qt 单连接、错误回退；契约见 [depth-video](docs/depth-video.md) §3–§4 |
 
 ### 16.4 关键设计决策
 

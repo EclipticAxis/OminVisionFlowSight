@@ -71,7 +71,9 @@ def colorize_depth(
     else:
         raise ValueError(f"未知 mode: {mode!r}（支持 'metric' / 'auto'）")
 
-    norm = np.nan_to_num(norm, nan=0.0, posinf=1.0, neginf=0.0)
+    # NaN / +Inf / -Inf 一律映射低值端（0.0），与 docstring 契约一致；
+    # 正常有限深度值的线性映射不受影响。
+    norm = np.nan_to_num(norm, nan=0.0, posinf=0.0, neginf=0.0)
     gray = (np.clip(norm, 0.0, 1.0) * 255.0).round().astype(np.uint8)
     cmap_flag = getattr(cv2, f"COLORMAP_{str(cmap).upper()}", cv2.COLORMAP_INFERNO)
     bgr = cv2.applyColorMap(gray, cmap_flag)
@@ -159,7 +161,13 @@ class DepthWorker(QThread):
             self._running = False
             self._cond.wakeAll()
         if self.isRunning() and not self.wait(wait_ms):
-            logger.warning("DepthWorker 未能在 %d ms 内退出", wait_ms)
+            # 超时只可能发生在单次推理（锁外）尚未返回时；_running 已置 False，
+            # 该次推理结束后主循环会在下一次取帧处协作退出。这里只收口状态
+            # 并告警，绝不使用 QThread.terminate() 强杀线程。
+            logger.warning(
+                "DepthWorker 未能在 %d ms 内退出（等待在飞推理完成，协作式停止）",
+                wait_ms,
+            )
 
     # ------------------------------------------------------------------
     # worker 线程主循环
@@ -296,8 +304,11 @@ class DepthWorker(QThread):
         return depth
 
     def _report_infer_error(self, slot_id: int, exc: Exception) -> None:
-        count = self._infer_error_counts.get(slot_id, 0) + 1
-        self._infer_error_counts[slot_id] = count
+        # 计数读写统一在同一把 QMutex 内（与 unregister_slot / 成功清理一致）；
+        # 锁内只做状态读写，日志与信号 emit 放锁外。
+        with QMutexLocker(self._mutex):
+            count = self._infer_error_counts.get(slot_id, 0) + 1
+            self._infer_error_counts[slot_id] = count
         if count == 1 or count % _INFER_ERROR_REPORT_INTERVAL == 0:
             logger.warning(
                 "DepthWorker slot %d 推理失败（连续 %d 次）: %s", slot_id, count, exc

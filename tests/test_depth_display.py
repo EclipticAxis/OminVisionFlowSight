@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from PyQt6.QtCore import QObject, Qt, pyqtSignal
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -80,37 +81,30 @@ def test_depth_frame_requires_matching_slot_and_enabled_mode(qapp) -> None:
     assert cell._depth_frame is None
     cell.update_depth_frame(0, frame)
     assert cell._depth_frame is not None
+    non_contiguous = np.zeros((8, 16, 3), dtype=np.uint8)[:, ::2, :]
+    assert not non_contiguous.flags["C_CONTIGUOUS"]
+    cell.update_depth_frame(0, non_contiguous)
+    assert cell._depth_frame is not None
     cell.clear_stream()
     assert cell._depth_frame is None
     cell.deleteLater()
 
 
-class _SignalStub:
+class _CameraWorkerStub(QObject):
+    frame_ready = pyqtSignal(int, object)
+
     def __init__(self) -> None:
-        self.slots: list[object] = []
-
-    def connect(self, slot, *_args) -> None:
-        if slot not in self.slots:
-            self.slots.append(slot)
-
-    def disconnect(self, slot) -> None:
-        if slot not in self.slots:
-            raise TypeError("not connected")
-        self.slots.remove(slot)
-
-
-class _CameraWorkerStub:
-    def __init__(self) -> None:
-        self.frame_ready = _SignalStub()
+        super().__init__()
 
 
 class _InferWorkerStub:
     def __init__(self) -> None:
         self.registered: list[int] = []
         self.unregistered: list[int] = []
+        self.submit_calls: list[tuple[int, object]] = []
 
-    def submit_frame(self, _slot_id, _frame) -> None:
-        pass
+    def submit_frame(self, slot_id, frame) -> None:
+        self.submit_calls.append((slot_id, frame))
 
     def register_slot(self, slot_id) -> None:
         self.registered.append(slot_id)
@@ -126,9 +120,10 @@ class _DepthWorkerStub:
         self.enabled: list[bool] = []
         self.running = False
         self.starts = 0
+        self.submit_calls: list[tuple[int, object]] = []
 
-    def submit_frame(self, _slot_id, _frame) -> None:
-        pass
+    def submit_frame(self, slot_id, frame) -> None:
+        self.submit_calls.append((slot_id, frame))
 
     def register_slot(self, slot_id) -> None:
         self.registered.append(slot_id)
@@ -163,6 +158,7 @@ class _WindowHarness:
         from gui.main_window import MainWindow
 
         self._safe_direct_connect = MainWindow._safe_direct_connect
+        self._disconnect_all = MainWindow._disconnect_all
         self._is_ai_enabled = True
         self._ai_depth_enabled = False
         self._cells = {0: _CellStub()}
@@ -179,43 +175,80 @@ class _WindowHarness:
         MainWindow._apply_depth_state(self)
 
 
-def test_main_window_switches_inference_route_without_duplicate_connections() -> None:
+def test_main_window_switches_inference_route_without_duplicate_connections(qapp) -> None:
     harness = _WindowHarness()
     camera = harness.camera
     infer = harness._infer_worker
     depth = harness._depth_worker
 
     harness.apply()
-    assert camera.frame_ready.slots == [infer.submit_frame]
+    camera.frame_ready.emit(0, "raw-0")
+    assert len(infer.submit_calls) == 1
+    assert depth.submit_calls == []
 
     harness._ai_depth_enabled = True
     harness.apply()
-    assert camera.frame_ready.slots == [depth.submit_frame]
-    assert infer.unregistered == [0]
+    camera.frame_ready.emit(0, "depth-0")
+    assert len(infer.submit_calls) == 1
+    assert len(depth.submit_calls) == 1
+    assert infer.unregistered == []  # 深度预览暂停提交，不销毁 tracker。
     assert depth.enabled[-1] is True and depth.starts == 1
     assert harness._cells[0].depth_modes[-1] is True
 
-    harness.apply()
-    assert camera.frame_ready.slots == [depth.submit_frame]
+    for index in range(4):
+        harness.apply()
+        camera.frame_ready.emit(0, f"depth-{index + 1}")
+    assert len(depth.submit_calls) == 5
+    assert len(infer.submit_calls) == 1
     assert depth.starts == 1
 
     harness._ai_depth_enabled = False
     harness.apply()
-    assert camera.frame_ready.slots == [infer.submit_frame]
+    camera.frame_ready.emit(0, "raw-1")
+    assert len(infer.submit_calls) == 2
+    assert len(depth.submit_calls) == 5
     assert depth.enabled[-1] is False
     assert harness._cells[0].depth_modes[-1] is False
 
+    for index in range(3):
+        harness.apply()
+        camera.frame_ready.emit(0, f"raw-{index + 2}")
+    assert len(infer.submit_calls) == 5
+    assert len(depth.submit_calls) == 5
 
-def test_master_ai_off_disables_depth_without_starting_detection() -> None:
+
+def test_master_ai_off_disables_depth_without_starting_detection(qapp) -> None:
     harness = _WindowHarness()
     harness._is_ai_enabled = False
     harness._ai_depth_enabled = True
     harness.apply()
 
-    assert harness.camera.frame_ready.slots == []
+    harness.camera.frame_ready.emit(0, "ignored")
+    assert harness._infer_worker.submit_calls == []
+    assert harness._depth_worker.submit_calls == []
     assert harness._depth_worker.enabled == [False]
     assert harness._depth_worker.starts == 0
     assert harness._cells[0].depth_modes == [False]
+
+
+def test_safe_direct_connect_removes_preexisting_qt_duplicates(qapp) -> None:
+    from gui.main_window import MainWindow
+
+    camera = _CameraWorkerStub()
+    calls: list[object] = []
+
+    def slot(_slot_id, frame) -> None:
+        calls.append(frame)
+
+    for _ in range(3):
+        camera.frame_ready.connect(slot, Qt.ConnectionType.DirectConnection)
+    MainWindow._safe_direct_connect(camera.frame_ready, slot)
+    camera.frame_ready.emit(0, "one")
+    assert calls == ["one"]
+
+    MainWindow._disconnect_all(camera.frame_ready, slot)
+    camera.frame_ready.emit(0, "ignored")
+    assert calls == ["one"]
 
 
 def test_depth_settings_default_off_and_roundtrip(monkeypatch) -> None:
@@ -242,12 +275,15 @@ def test_depth_settings_default_off_and_roundtrip(monkeypatch) -> None:
 
 
 class _ErrorWindowHarness:
+    _DEPTH_ERROR_NOTICE_INTERVAL = 1.0
+
     def __init__(self) -> None:
         self._is_ai_enabled = True
         self._ai_depth_enabled = True
         self.messages: list[str] = []
         self.sync_calls = 0
         self.clear_calls = 0
+        self._depth_error_notice_ts: dict[int, float] = {}
 
     def _refresh_dashboard(self, message) -> None:
         self.messages.append(message)
@@ -273,6 +309,9 @@ def test_transient_depth_error_keeps_feature_running() -> None:
     assert window.sync_calls == 0  # 不得保存关闭状态或影响其他采集路。
     assert window.clear_calls == 0
     assert "跳过" in window.messages[-1]
+
+    window.error(0, "another transient error")
+    assert len(window.messages) == 1  # dashboard 采用时间窗节流。
 
 
 def test_model_depth_error_falls_back_and_ignores_stale_error() -> None:

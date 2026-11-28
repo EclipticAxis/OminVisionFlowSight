@@ -86,6 +86,7 @@ def _debug_report(hypothesis_id: str, location: str, msg: str, data: dict) -> No
 class MainWindow(QMainWindow):
 
     _MAX_SLOTS = 4
+    _DEPTH_ERROR_NOTICE_INTERVAL = 1.0
 
     @staticmethod
     def _resolve_special_model_path(path: str) -> str:
@@ -182,7 +183,8 @@ class MainWindow(QMainWindow):
         self._infer_worker.set_rectangle_max_count(self._ai_rectangle_max_count)
         self._infer_worker.set_rectangle_target_color(self._ai_rectangle_target_rgb)
         self._infer_worker.set_rectangle_color_threshold(self._ai_rectangle_color_threshold)
-        self._depth_worker = DepthWorker()
+        self._depth_worker = DepthWorker(parent=self)
+        self._depth_error_notice_ts: dict[int, float] = {}
         self._depth_worker.error_occurred.connect(self._on_depth_error)
 
         self._camera_list = scan_cameras()
@@ -877,26 +879,21 @@ class MainWindow(QMainWindow):
         self._apply_depth_state()
 
     def _apply_depth_state(self) -> None:
-        """同步深度显示与推理路由，采集帧始终继续送往 CameraCell。"""
+        """同步深度显示与推理路由，保留检测 tracker 及其运行时状态。"""
         active = self._is_ai_enabled and self._ai_depth_enabled
         for cell in self._cells.values():
             cell.set_depth_mode(active)
 
         for slot_id, worker in self._camera_capture.get_all_workers():
+            # 先清掉两个候选槽的全部历史连接，再按目标状态建立一个连接。
+            # 不得 unregister InferWorker：深度预览只是暂停提交，不重置 tracker。
+            self._disconnect_all(worker.frame_ready, self._infer_worker.submit_frame)
+            self._disconnect_all(worker.frame_ready, self._depth_worker.submit_frame)
             if active:
-                try:
-                    worker.frame_ready.disconnect(self._infer_worker.submit_frame)
-                except TypeError:
-                    pass
-                self._infer_worker.unregister_slot(slot_id)
                 self._cells[slot_id].update_detections(slot_id, [])
                 self._depth_worker.register_slot(slot_id)
                 self._safe_direct_connect(worker.frame_ready, self._depth_worker.submit_frame)
             else:
-                try:
-                    worker.frame_ready.disconnect(self._depth_worker.submit_frame)
-                except TypeError:
-                    pass
                 self._depth_worker.unregister_slot(slot_id)
                 if self._is_ai_enabled:
                     self._infer_worker.register_slot(slot_id)
@@ -911,7 +908,11 @@ class MainWindow(QMainWindow):
         if slot_id >= 0:
             logging.warning("DepthWorker transient error (slot=%d): %s", slot_id, message)
             if self._is_ai_enabled and self._ai_depth_enabled:
-                self._refresh_dashboard(f"深度帧已跳过（采集位 {slot_id + 1}）：{message}")
+                now = time.monotonic()
+                last_notice = self._depth_error_notice_ts.get(slot_id, 0.0)
+                if now - last_notice >= self._DEPTH_ERROR_NOTICE_INTERVAL:
+                    self._depth_error_notice_ts[slot_id] = now
+                    self._refresh_dashboard(f"深度帧已跳过（采集位 {slot_id + 1}）：{message}")
             return
 
         logging.error("DepthWorker model error: %s", message)
@@ -1122,7 +1123,17 @@ class MainWindow(QMainWindow):
             cell.update_detections(slot_id, [])
 
     @staticmethod
+    def _disconnect_all(signal, slot) -> None:
+        """移除同一槽的全部历史连接；PyQt disconnect 每次只移除一条。"""
+        while True:
+            try:
+                signal.disconnect(slot)
+            except TypeError:
+                return
+
+    @staticmethod
     def _safe_connect(signal, slot) -> None:
+        MainWindow._disconnect_all(signal, slot)
         try:
             signal.connect(slot, Qt.ConnectionType.UniqueConnection)
         except TypeError:
@@ -1133,13 +1144,13 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _safe_direct_connect(signal, slot) -> None:
+        # PyQt6 的 ConnectionType 不是 Flag，不能用 | 组合 Unique/Direct。
+        # 显式清理后再直连，才能在所有支持版本中保证单连接。
+        MainWindow._disconnect_all(signal, slot)
         try:
-            signal.connect(slot, Qt.ConnectionType.UniqueConnection | Qt.ConnectionType.DirectConnection)
+            signal.connect(slot, Qt.ConnectionType.DirectConnection)
         except TypeError:
-            try:
-                signal.connect(slot, Qt.ConnectionType.DirectConnection)
-            except TypeError:
-                pass
+            pass
 
     def _on_camera_selected(self, slot_id: int, combo_index: int) -> None:
         device_name = self._combos[slot_id].itemData(combo_index)

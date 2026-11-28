@@ -349,6 +349,8 @@ class CameraCell(QWidget):
         if frame.ndim != 3 or frame.shape[2] != 3:
             return
 
+        # QImage 借用 numpy 内存，非连续切片必须先拷贝成连续 RGB 缓冲。
+        frame = np.ascontiguousarray(frame)
         h, w, _ = frame.shape
         qimg = QImage(frame.data, w, h, 3 * w, QImage.Format.Format_RGB888)
         self._depth_frame = qimg.copy()
