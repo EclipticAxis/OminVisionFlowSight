@@ -2,7 +2,7 @@
 
 > **版本**：0.2.0 — 2026-11-28
 > **范围**：`ai/depth_worker.py`、`gui/main_window.py`（深度开关、真实 Qt 信号路由）、`gui/camera_cell.py`、`gui/settings_dialog.py`、`requirements.txt`、`tests/`（DepthWorker 24 项 + 显示/路由/错误 9 项）；模型文件 `models/yolo26s-depth.pt` 为部署依赖
-> **状态**：工作区已实现，待合并；PR27 审查修复已完成，33 项深度专项测试通过；完整套件 1560 项通过、1 项跳过
+> **状态**：已合入 main（PR #27 → `876dc07`）；PR27 审查修复已完成，33 项深度专项测试通过；完整套件 1560 项通过、1 项跳过
 
 ---
 
