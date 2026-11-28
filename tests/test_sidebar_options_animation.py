@@ -96,6 +96,23 @@ def test_gesture_panel_parity(window) -> None:
     assert window._gesture_options_animation is None
 
 
+def test_depth_panel_parity(window) -> None:
+    panel = window._depth_options_panel
+    window._set_depth_options_visible(False, animated=False)
+    assert panel.isHidden() and panel.maximumHeight() == 0
+
+    window._set_depth_options_visible(True, animated=True)
+    _settle()
+    assert not panel.isHidden() and panel.maximumHeight() > 0
+    assert panel.graphicsEffect() is None
+    assert window._depth_options_animation is None
+
+    window._set_depth_options_visible(False, animated=True)
+    _settle()
+    assert panel.isHidden() and panel.maximumHeight() == 0
+    assert window._depth_options_animation is None
+
+
 def test_expand_not_squeezed_by_stale_parent_clamp(window) -> None:
     """回归：AI 面板在选项收起状态下展开后，再展开选项不得被旧 maxHeight 钳制挤压。
 

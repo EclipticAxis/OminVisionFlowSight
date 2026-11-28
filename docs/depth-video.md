@@ -1,8 +1,8 @@
 # 深度视频（yolo26s-depth 单目深度估计）设计文档
 
 > **版本**：0.3.0 — 2026-11-28
-> **范围**：`ai/depth_worker.py`、`gui/main_window.py`（深度开关、真实 Qt 信号路由）、`gui/camera_cell.py`、`gui/settings_dialog.py`、`requirements.txt`、`tests/`（DepthWorker 46 项 + 显示/路由/错误/色标 10 项）；模型文件 `models/yolo26s-depth.pt` 为部署依赖
-> **状态**：0.2.0 已合入 main（PR #27 → `876dc07`）；0.3.0 时域稳定与色带优化工作区待合并；56 项深度专项通过，完整套件 1583 项通过、1 项跳过；真实主窗口集成验证通过
+> **范围**：`ai/depth_worker.py`、`gui/main_window.py`、`gui/camera_cell.py`、`gui/settings_dialog.py`、`tools/benchmark_depth_video.py`、`tests/`（DepthWorker 52 项 + 显示/路由/错误/色标 10 项 + 侧栏联动 1 项）；模型文件 `models/yolo26s-depth.pt` 为部署依赖
+> **状态**：0.2.0 已合入 main（PR #27 → `876dc07`）；0.3.0 与 PR28 审查修复待合并；63 项相关专项通过，完整套件 1590 项通过、1 项跳过；真实主窗口集成验证通过
 
 ---
 
@@ -75,17 +75,18 @@ result.depth.data（米制图）→ resize 到输入尺寸
 | 色带与量程 | 默认 Turbo + disparity + gamma=0.5，近处红橙、远处蓝紫；可选 Inferno/Plasma/Viridis 与固定 0–3/0–8/0–20 m；自动量程目标为 2%/98% 分位，范围 alpha=0.05，最小跨度 0.5 m；固定 0 米起档仅以 5%×vmax 作为着色近端，避免 1/0 奇点 |
 | 帧调度 | 每 slot 仅保留最新帧（新帧覆盖旧帧，不排队积压）；多路经 deque 公平轮询；`QMutex`/`QWaitCondition` 唤醒与等待 |
 | 公共接口 | `set_enabled(bool)` / `register(slot)` / `unregister(slot)` / `set_visualization(cmap, range_mode)` / `stop()` |
-| 信号 | 成功时先发 `depth_range_ready(int slot, float vmin, float vmax)` 再发 `depth_ready(int slot, object image)`；代际过期的在飞帧既不写状态也不发射；`error_occurred(int slot, str message)`，**模型级错误 slot = -1** |
-| 显示语义 | 深度模式下整幅替换（非叠加、非混合）；未收到首帧深度图前短暂显示原帧但不画检测框；右下角色标显示当前实际米制量程 |
+| 信号 | 成功时先发 `depth_range_ready(int slot, float vmin, float vmax)` 再发 `depth_ready(int slot, object image)`；per-slot tombstone 代际只影响对应采集位，cmap/量程变化使全部在飞旧帧失效；过期帧不写状态也不发射 |
+| 显示语义 | 深度模式下整幅替换；色标使用当前实际米制量程调用同一 `colorize_depth`，缓存键为 `cmap+vmin+vmax`，逐像素与画面一致；色标锚定 `video_rect` 而非卡片黑边 |
 | 配置持久化 | `ai/depth_colormap` 默认 `turbo`；`ai/depth_range_mode` 默认 `auto`，与 `ai/depth_enabled` 均通过 QSettings 保存 |
 | 互斥语义 | 深度开启 ⇒ 仅断开该路 `InferWorker.submit_frame`，不注销/重建 tracker，检测框/骨骼/手势均不绘制；关闭深度或总 AI ⇒ 原帧立即恢复，总 AI 仍开时恢复 `InferWorker` |
 | 信号连接 | `_disconnect_all` 循环移除历史重复槽；`_safe_direct_connect` 不使用非法 `UniqueConnection | DirectConnection` 位运算，每次路由先清理再建立至多一条直连；真实 Qt 信号回归测试锁定 |
-| 开关与持久化 | 默认**关闭**；GUI “深度视频”开关位于 AI 功能面板；生效条件 = 总 AI 开关 AND 深度开关；状态持久化于 QSettings 键 `ai/depth_enabled` |
+| 开关与持久化 | 默认**关闭**；色带/量程选项仅在深度开关开启时展开，复用既有透明度动画契约；`ai/depth_enabled`、`ai/depth_colormap`、`ai/depth_range_mode` 均持久化 |
 | 错误回退 | 模型级 `slot=-1` 错误自动关闭深度开关并回退原帧；单帧 `slot>=0` 错误只跳过当前帧、保留深度模式并继续；dashboard 按每路 1 秒时间窗节流；已停用后的 queued 模型错误不改写开关 |
 | 数值与缓冲 | NaN/+Inf/-Inf 统一映射低端；`CameraCell.update_depth_frame` 对非连续 numpy 输入先转连续 RGB 缓冲再创建 QImage |
 | 资源清理 | `DepthWorker` 由 MainWindow 持有 parent；摄像头切换清理该路深度帧；`closeEvent` 调 `DepthWorker.stop(wait_ms=30000)`，协作等待在飞推理结束，不使用 `QThread.terminate()` |
-| 性能基线 | 单路实测（RTX 5080 Laptop，imgsz 640）：推理+传输+着色中位 **15.6 ms（约 64 fps）**；默认采集 640×480@30。多路共享单模型，实际 fps 按总算力分配，**不承诺所有路 30 fps** |
-| 0.3.0 实测 | 真实 ASUS FHD webcam + DepthWorker 核心链路约 **30.15 fps**；最终 disparity/gamma 映射同批帧配对比较颜色波动下降 **78.4%**；真实主窗口与近暖远冷色标集成通过；未加入后台预热 |
+| 历史性能基线 | PR27 单路实测（RTX 5080 Laptop，imgsz 640）：推理+传输+着色中位 **15.6 ms（约 64 fps）**，不含 0.3.0 新增滤波与量程计算，不与本版直接作速度对比 |
+| 0.3.0 实测 | 真实 ASUS FHD webcam + DepthWorker 核心链路约 **30.15 fps**；不同实时输入样本的配对颜色波动下降 **56.2%–78.4%**；真实主窗口与近暖远冷色标集成通过；未加入后台预热 |
+| 可复现复核 | `tools/benchmark_depth_video.py` 支持视频/摄像头与 JSON 输出；当前 30 帧复核中位：推理 9.87ms、滤波 4.37ms、量程 1.28ms、raw+filtered 双着色 4.85ms；脚本 21.79fps 包含对照所需的双着色，产品只着色 filtered 一次 |
 | 能力边界 | 单目深度估计 ≠ 深度相机：固定或自动显示量程都不是测量精度承诺；禁止在 UI/文档中暗示测距级准确度 |
 | 录像语义 | 本特性只替换 GUI 预览；录像仍保存原始摄像头画面，不保存伪彩深度视频 |
 
@@ -104,8 +105,10 @@ result.depth.data（米制图）→ resize 到输入尺寸
 - **模型部署**：`models/yolo26s-depth.pt` 是**部署依赖，不属于普通源码**；
   缺失时模型级错误经 `error_occurred(-1, ...)` 上报并触发自动回退，
   不得让异常逃逸到 GUI 线程。
-- **测试维护**：DepthWorker 专项 46 项（`tests/test_depth_worker.py`）覆盖
+- **测试维护**：DepthWorker 专项 52 项（`tests/test_depth_worker.py`）覆盖
   懒加载/设备选择/调度/信号/停止契约，改动 `ai/depth_worker.py` 后必跑；
   GUI 集成测试 10 项（`tests/test_depth_display.py`）覆盖开关互斥、真实 Qt 单连接、
-  tracker 保留、错误回退、非连续帧与色标；closeEvent 清理由真实主窗口集成冒烟验证。
+  tracker 保留、错误回退、非连续帧与色标逐像素一致；侧栏新增深度面板联动测试。
+  closeEvent 清理由真实主窗口集成冒烟验证。
   新增行为请先加测试再改实现。
+- **实测复核**：运行 `venv\Scripts\python.exe tools\benchmark_depth_video.py --camera "ASUS FHD webcam" --frames 120`，或用 `--input <视频>`；`--output <path.json>` 可落盘报告。

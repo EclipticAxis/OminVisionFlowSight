@@ -172,10 +172,15 @@ def colorize_depth(
         valid = np.isfinite(arr) & (arr > 0.0)
         disparity_far = 1.0 / far
         disparity_near = 1.0 / near
+        # 全数组就地计算（where 屏蔽无效像素）：避免布尔花式索引的
+        # gather/scatter 与多份临时数组。无效像素保持 0，经减/除/clip/power
+        # 后仍为 0，与参考公式（仅对有效像素计算后回填）逐像素一致。
         norm = np.zeros_like(arr, dtype=np.float32)
-        disparity = 1.0 / arr[valid]
-        normalized = (disparity - disparity_far) / (disparity_near - disparity_far)
-        norm[valid] = np.power(np.clip(normalized, 0.0, 1.0), gamma)
+        np.divide(1.0, arr, out=norm, where=valid)  # disparity = 1 / depth
+        norm -= disparity_far
+        norm /= disparity_near - disparity_far
+        np.clip(norm, 0.0, 1.0, out=norm)
+        np.power(norm, gamma, out=norm)
     elif mode == "metric":
         span = float(vmax) - float(vmin)
         if span <= 0:
@@ -237,7 +242,10 @@ class DepthWorker(QThread):
         self._infer_error_counts: dict[int, int] = {}
         self._depth_state: dict[int, np.ndarray] = {}         # slot_id -> 滤波后 float32 深度
         self._range_state: dict[int, tuple[float, float]] = {}  # slot_id -> (vmin, vmax)（auto）
-        self._state_seq = 0  # 滤波/量程状态代际：清理时递增，防在飞帧复活旧状态
+        # 滤波/量程状态代际（per-slot，tombstone：只增不删）。
+        # unregister/disable/可视化切换时递增对应 slot 代际使在飞旧帧失效；
+        # 条目永不删除，确保 unregister→register 后旧帧不会因代际重置而复生。
+        self._slot_gen: dict[int, int] = {}
         self._mutex = QMutex()
         self._cond = QWaitCondition()
 
@@ -247,7 +255,10 @@ class DepthWorker(QThread):
 
     def register_slot(self, slot_id: int) -> None:
         with QMutexLocker(self._mutex):
-            self._registered.add(int(slot_id))
+            slot_id = int(slot_id)
+            self._registered.add(slot_id)
+            # tombstone：只初始化不重置，保留历史代际防止旧在飞帧复活
+            self._slot_gen.setdefault(slot_id, 0)
 
     def unregister_slot(self, slot_id: int) -> None:
         with QMutexLocker(self._mutex):
@@ -257,7 +268,9 @@ class DepthWorker(QThread):
             self._infer_error_counts.pop(slot_id, None)
             self._depth_state.pop(slot_id, None)
             self._range_state.pop(slot_id, None)
-            self._state_seq += 1
+            # 仅使本 slot 的在飞帧失效；其他 slot 代际不受影响。
+            # 代际条目保留（tombstone），重新 register 不复位。
+            self._slot_gen[slot_id] = self._slot_gen.get(slot_id, 0) + 1
             try:
                 self._rr.remove(slot_id)
             except ValueError:
@@ -289,23 +302,36 @@ class DepthWorker(QThread):
                 self._rr.clear()
                 self._depth_state.clear()
                 self._range_state.clear()
-                self._state_seq += 1
+                # 使所有当前/已知 slot 的在飞旧帧失效（tombstone 代际只增不删）
+                self._bump_all_generations()
             self._cond.wakeAll()
 
     def set_visualization(self, cmap: str, range_mode: str) -> None:
         """切换色带 / 量程模式。非法值抛 ``ValueError`` 且不改变现有设置。
 
-        色带切换保留深度滤波与量程状态；量程模式切换清空自适应量程状态
-        （固定量程本身不做范围平滑）。
+        - cmap 或 range_mode 实际变化：递增所有已知 slot 代际，使在飞
+          旧色带 / 旧量程帧失效（不发出、不写状态）；
+        - cmap 变化保留已完成的深度滤波与量程状态；
+        - range_mode 变化继续清空自适应量程状态（固定量程本身不做范围平滑）；
+        - 同值调用为 no-op：不改设置、不动代际与状态。
         """
         cmap = _validate_cmap(cmap)
         range_mode = _validate_range_mode(range_mode)
         with QMutexLocker(self._mutex):
+            cmap_changed = cmap != self._cmap
+            range_changed = range_mode != self._range_mode
+            if not cmap_changed and not range_changed:
+                return  # 同值 no-op
             self._cmap = cmap
-            if range_mode != self._range_mode:
-                self._range_mode = range_mode
+            self._range_mode = range_mode
+            if range_changed:
                 self._range_state.clear()
-                self._state_seq += 1
+            self._bump_all_generations()
+
+    def _bump_all_generations(self) -> None:
+        """递增所有已知 slot 的代际（须在 _mutex 内调用）。"""
+        for slot in self._slot_gen:
+            self._slot_gen[slot] += 1
 
     def stop(self, wait_ms: int = 5000) -> None:
         """请求线程退出并等待。幂等，可在未 start 时安全调用。"""
@@ -368,7 +394,7 @@ class DepthWorker(QThread):
                     # 快照可视化设置与上一帧滤波/量程状态（锁内只读状态）
                     prev_depth = self._depth_state.get(slot_id)
                     prev_range = self._range_state.get(slot_id)
-                    seq = self._state_seq
+                    seq = self._slot_gen.get(slot_id, 0)
                     cmap = self._cmap
                     range_mode = self._range_mode
 
@@ -390,8 +416,8 @@ class DepthWorker(QThread):
                     still_active = (
                         self._running and self._enabled and slot_id in self._registered
                     )
-                    current_generation = still_active and seq == self._state_seq
-                    # 清理（disable/unregister/量程切换）后不得复活旧状态
+                    current_generation = still_active and seq == self._slot_gen.get(slot_id, 0)
+                    # 清理（disable/unregister/cmap/量程切换）后不得复活旧状态
                     if current_generation:
                         self._depth_state[slot_id] = filtered
                         if range_mode == "auto":

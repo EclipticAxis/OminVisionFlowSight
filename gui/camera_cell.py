@@ -189,6 +189,7 @@ class CameraCell(QWidget):
         self._depth_range: tuple[float, float] | None = None
         self._depth_colormap = "turbo"
         self._depth_palette: QImage | None = None
+        self._depth_palette_key: tuple[str, float, float] | None = None
         self._bbox_cache: list[dict] = []
         self._last_detect_time = 0.0
         self._idle_subtext = _NO_SIGNAL_SUBTEXTS[0]
@@ -369,6 +370,7 @@ class CameraCell(QWidget):
             return
         self._depth_colormap = cmap
         self._depth_palette = None
+        self._depth_palette_key = None
         self.update()
 
     def update_depth_range(self, slot_id: int, vmin: float, vmax: float) -> None:
@@ -383,11 +385,15 @@ class CameraCell(QWidget):
             self.update()
 
     def _get_depth_palette(self) -> QImage:
-        if self._depth_palette is None:
+        if self._depth_range is None:
+            raise ValueError("生成深度色标前必须先设置实际量程")
+        vmin, vmax = self._depth_range
+        key = (self._depth_colormap, vmin, vmax)
+        if self._depth_palette is None or self._depth_palette_key != key:
             from ai.depth_worker import colorize_depth
 
-            values = np.linspace(0.0, 1.0, 256, dtype=np.float32)[None, :]
-            rgb = colorize_depth(values, vmin=0.0, vmax=1.0, cmap=self._depth_colormap)
+            values = np.linspace(vmin, vmax, 256, dtype=np.float32)[None, :]
+            rgb = colorize_depth(values, vmin=vmin, vmax=vmax, cmap=self._depth_colormap)
             self._depth_palette = QImage(
                 rgb.data,
                 rgb.shape[1],
@@ -395,6 +401,7 @@ class CameraCell(QWidget):
                 3 * rgb.shape[1],
                 QImage.Format.Format_RGB888,
             ).copy()
+            self._depth_palette_key = key
         return self._depth_palette
 
     def _paint_depth_scale(self, painter: QPainter, bounds: QRectF) -> None:
@@ -645,7 +652,7 @@ class CameraCell(QWidget):
                 self._paint_bboxes(painter, video_rect)
 
         self._paint_overlay_info(painter, inner_rect)
-        self._paint_depth_scale(painter, inner_rect)
+        self._paint_depth_scale(painter, video_rect)
         painter.end()
 
     def _paint_card_background(self, painter: QPainter, rect: QRectF) -> None:

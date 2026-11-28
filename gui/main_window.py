@@ -128,6 +128,7 @@ class MainWindow(QMainWindow):
         self._grid_layout: QGridLayout | None = None
         self._is_frame_flipped = True
         self._ai_feature_animation: QPropertyAnimation | None = None
+        self._depth_options_animation: QPropertyAnimation | None = None
         self._gesture_options_animation: QPropertyAnimation | None = None
         self._rectangle_options_animation: QPropertyAnimation | None = None
 
@@ -416,6 +417,8 @@ class MainWindow(QMainWindow):
         self._depth_toggle.setToolTip("以 yolo26s-depth 彩色深度画面替换原画面；开启时暂停普通检测")
         self._depth_options_panel = QWidget()
         self._depth_options_panel.setObjectName("featureRow")
+        self._depth_options_panel.setVisible(False)
+        self._depth_options_panel.setMaximumHeight(0)
         depth_options_layout = QVBoxLayout(self._depth_options_panel)
         depth_options_layout.setContentsMargins(4, 0, 4, 0)
         depth_options_layout.setSpacing(8)
@@ -576,6 +579,7 @@ class MainWindow(QMainWindow):
         rectangle_options_layout.addWidget(self._rectangle_color_panel)
         layout.addWidget(self._rectangle_options_panel)
         self._skeleton_toggle.setEnabled(self._ai_person_enabled)
+        self._set_depth_options_visible(self._ai_depth_enabled, animated=False)
         self._set_gesture_options_visible(self._ai_skeleton_enabled and self._ai_person_enabled, animated=False)
         self._set_rectangle_options_visible(self._ai_rectangle_enabled, animated=False)
         return panel
@@ -767,6 +771,8 @@ class MainWindow(QMainWindow):
         combos = list(self._combos.values())
         if hasattr(self, "_gesture_mode_combo"):
             combos.append(self._gesture_mode_combo)
+        if hasattr(self, "_depth_cmap_combo"):
+            combos.extend((self._depth_cmap_combo, self._depth_range_combo))
         if hasattr(self, "_rectangle_sensitivity_combo"):
             combos.append(self._rectangle_sensitivity_combo)
 
@@ -893,6 +899,7 @@ class MainWindow(QMainWindow):
             self._ai_gesture_mode = "off"
 
         self._skeleton_toggle.setEnabled(self._ai_person_enabled)
+        self._set_depth_options_visible(self._ai_depth_enabled, animated=self._ai_feature_panel.isVisible())
         self._set_gesture_options_visible(self._ai_skeleton_enabled and self._ai_person_enabled, animated=self._ai_feature_panel.isVisible())
         self._set_rectangle_options_visible(self._ai_rectangle_enabled, animated=self._ai_feature_panel.isVisible())
         for toggle, value in (
@@ -1064,6 +1071,11 @@ class MainWindow(QMainWindow):
     def _set_gesture_options_visible(self, visible: bool, animated: bool = True) -> None:
         self._apply_options_panel_visibility(
             self._gesture_options_panel, "_gesture_options_animation", visible, animated
+        )
+
+    def _set_depth_options_visible(self, visible: bool, animated: bool = True) -> None:
+        self._apply_options_panel_visibility(
+            self._depth_options_panel, "_depth_options_animation", visible, animated
         )
 
     def _set_rectangle_options_visible(self, visible: bool, animated: bool = True) -> None:
