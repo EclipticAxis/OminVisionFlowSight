@@ -896,6 +896,7 @@ class MainWindow(QMainWindow):
             else:
                 self._depth_worker.unregister_slot(slot_id)
                 if self._is_ai_enabled:
+                    # 深度切换本身保留槽位；仅总 AI 曾关闭后需要重新注册。
                     self._infer_worker.register_slot(slot_id)
                     self._safe_direct_connect(worker.frame_ready, self._infer_worker.submit_frame)
 
@@ -1219,15 +1220,12 @@ class MainWindow(QMainWindow):
                 self._infer_worker.register_slot(slot_id)
                 self._safe_connect(self._infer_worker.detection_ready, self._cells[slot_id].update_detections)
             else:
-                try:
-                    worker.frame_ready.disconnect(self._infer_worker.submit_frame)
-                except TypeError:
-                    pass
+                self._disconnect_all(worker.frame_ready, self._infer_worker.submit_frame)
                 self._infer_worker.unregister_slot(slot_id)
-                try:
-                    self._infer_worker.detection_ready.disconnect(self._cells[slot_id].update_detections)
-                except TypeError:
-                    pass
+                self._disconnect_all(
+                    self._infer_worker.detection_ready,
+                    self._cells[slot_id].update_detections,
+                )
                 self._cells[slot_id].update_detections(slot_id, [])
 
         self._apply_depth_state()
