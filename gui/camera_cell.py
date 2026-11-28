@@ -186,6 +186,9 @@ class CameraCell(QWidget):
         self._current_frame_ts = 0.0
         self._depth_frame: QImage | None = None
         self._depth_mode = False
+        self._depth_range: tuple[float, float] | None = None
+        self._depth_colormap = "turbo"
+        self._depth_palette: QImage | None = None
         self._bbox_cache: list[dict] = []
         self._last_detect_time = 0.0
         self._idle_subtext = _NO_SIGNAL_SUBTEXTS[0]
@@ -265,6 +268,7 @@ class CameraCell(QWidget):
         self._current_frame = None
         self._current_frame_ts = 0.0
         self._depth_frame = None
+        self._depth_range = None
         self._bbox_cache = []
         self._last_detect_time = 0.0
         self._fps_counter = 0
@@ -332,6 +336,7 @@ class CameraCell(QWidget):
             return
         self._depth_mode = enabled
         self._depth_frame = None
+        self._depth_range = None
         self._bbox_cache = []
         self._bbox_signature = None
         self._overlay_cache = None
@@ -357,6 +362,62 @@ class CameraCell(QWidget):
         if self._should_repaint():
             self._record_repaint("frame")
             self.update()
+
+    def set_depth_colormap(self, cmap: str) -> None:
+        """同步色标色带；实际深度帧的色带由 DepthWorker 设置。"""
+        if self._depth_colormap == cmap:
+            return
+        self._depth_colormap = cmap
+        self._depth_palette = None
+        self.update()
+
+    def update_depth_range(self, slot_id: int, vmin: float, vmax: float) -> None:
+        if slot_id != self.slot_id or not self._depth_mode:
+            return
+        vmin, vmax = float(vmin), float(vmax)
+        if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
+            return
+        changed = self._depth_range != (vmin, vmax)
+        self._depth_range = (vmin, vmax)
+        if changed:
+            self.update()
+
+    def _get_depth_palette(self) -> QImage:
+        if self._depth_palette is None:
+            from ai.depth_worker import colorize_depth
+
+            values = np.linspace(0.0, 1.0, 256, dtype=np.float32)[None, :]
+            rgb = colorize_depth(values, vmin=0.0, vmax=1.0, cmap=self._depth_colormap)
+            self._depth_palette = QImage(
+                rgb.data,
+                rgb.shape[1],
+                rgb.shape[0],
+                3 * rgb.shape[1],
+                QImage.Format.Format_RGB888,
+            ).copy()
+        return self._depth_palette
+
+    def _paint_depth_scale(self, painter: QPainter, bounds: QRectF) -> None:
+        if not self._depth_mode or self._depth_frame is None or self._depth_range is None:
+            return
+        vmin, vmax = self._depth_range
+        bar_width = max(80.0, min(180.0, bounds.width() * 0.34))
+        bar_rect = QRectF(bounds.right() - bar_width - 4, bounds.bottom() - 18, bar_width, 8)
+        panel_rect = QRectF(bar_rect.left() - 6, bar_rect.top() - 19, bar_width + 12, 37)
+        painter.save()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(7, 10, 18, 190))
+        painter.drawRoundedRect(panel_rect, 5, 5)
+        painter.setPen(QColor("#E8EEFC"))
+        painter.setFont(self._pill_font)
+        label_y = bar_rect.top() - 17
+        painter.drawText(QRectF(bar_rect.left(), label_y, 70, 14), Qt.AlignmentFlag.AlignLeft, f"{vmin:.2f} m")
+        painter.drawText(QRectF(bar_rect.right() - 70, label_y, 70, 14), Qt.AlignmentFlag.AlignRight, f"{vmax:.2f} m")
+        painter.drawImage(bar_rect, self._get_depth_palette())
+        painter.setPen(QPen(QColor(255, 255, 255, 70), 0.7))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(bar_rect)
+        painter.restore()
 
     def _record_repaint(self, reason: str) -> None:
         if reason == "frame":
@@ -584,6 +645,7 @@ class CameraCell(QWidget):
                 self._paint_bboxes(painter, video_rect)
 
         self._paint_overlay_info(painter, inner_rect)
+        self._paint_depth_scale(painter, inner_rect)
         painter.end()
 
     def _paint_card_background(self, painter: QPainter, rect: QRectF) -> None:

@@ -90,6 +90,35 @@ def test_depth_frame_requires_matching_slot_and_enabled_mode(qapp) -> None:
     cell.deleteLater()
 
 
+def test_depth_scale_tracks_range_and_colormap(qapp) -> None:
+    from gui.camera_cell import CameraCell
+
+    cell = CameraCell(0, "camera")
+    cell.resize(320, 240)
+    cell.set_depth_mode(True)
+    cell.update_depth_frame(0, np.zeros((48, 64, 3), dtype=np.uint8))
+    cell.set_depth_colormap("turbo")
+    cell.update_depth_range(0, 0.64, 1.72)
+    assert cell._depth_range == (0.64, 1.72)
+
+    _render_center(cell)
+    assert cell._depth_palette is not None
+    palette = cell._depth_palette
+    near = palette.pixelColor(1, 0)
+    far = palette.pixelColor(palette.width() - 1, 0)
+    assert near.red() > near.blue()  # 近处暖色
+    assert far.blue() >= far.red()   # 远处蓝紫
+    cell.set_depth_colormap("inferno")
+    assert cell._depth_palette is None
+    cell.update_depth_range(1, 0.0, 3.0)
+    assert cell._depth_range == (0.64, 1.72)
+    cell.update_depth_range(0, float("nan"), 3.0)
+    assert cell._depth_range == (0.64, 1.72)
+    cell.set_depth_mode(False)
+    assert cell._depth_range is None
+    cell.deleteLater()
+
+
 class _CameraWorkerStub(QObject):
     frame_ready = pyqtSignal(int, object)
 
@@ -269,9 +298,15 @@ def test_depth_settings_default_off_and_roundtrip(monkeypatch) -> None:
     monkeypatch.setattr(module, "QSettings", SettingsStub)
     settings = module.SettingsDialog
     assert settings.load_ai_depth_enabled() is False
+    assert settings.load_ai_depth_colormap() == "turbo"
+    assert settings.load_ai_depth_range_mode() == "auto"
     settings.save_ai_depth_enabled(True)
+    settings.save_ai_depth_colormap("plasma")
+    settings.save_ai_depth_range_mode("0-8")
     assert values[settings._KEY_AI_DEPTH_ENABLED] is True
     assert settings.load_ai_depth_enabled() is True
+    assert settings.load_ai_depth_colormap() == "plasma"
+    assert settings.load_ai_depth_range_mode() == "0-8"
 
 
 class _ErrorWindowHarness:
